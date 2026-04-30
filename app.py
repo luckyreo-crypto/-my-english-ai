@@ -69,7 +69,7 @@ def delete_from_library(title):
         with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] 하이브리드 멀티 AI 엔진 (디테일 분석 강화!)
+# [2] 하이브리드 멀티 AI 엔진
 # ============================================================
 class MultiAIEngine:
     def __init__(self, selected_engine):
@@ -111,12 +111,11 @@ class MultiAIEngine:
             return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
         return ["파싱 실패 (AI 응답 오류)"] * len(sentences)
 
-    # 🚨 [핵심 변경] 프롬프트를 세분화하여 요청하신 4가지 조건(상세문법, 예시3개, 배경/단어/발음 분리, 자연스러운 해석) 완벽 적용
     def deep_analyze(self, text):
         prompt = f"""
-        당신은 대한민국 최고의 영어 일타 강사입니다. 아래 문장을 깊이 있게 분석하여 반드시 순수 JSON으로만 응답하세요. 마크다운 기호(```json)는 절대 쓰지 마세요.
+        당신은 대한민국 최고의 영어 일타 강사입니다. 아래 문장을 깊이 있게 분석하여 반드시 순수 JSON으로만 응답하세요.
         {{
-            "grammar": "문장의 구조(1~5형식 중 무엇인지)와 핵심 문법 요소에 대한 아주 상세하고 친절한 설명 (줄바꿈 가능)",
+            "grammar": "문장의 구조(1~5형식 중 무엇인지)와 핵심 문법 요소에 대한 아주 상세하고 친절한 설명",
             "examples": [
                 "1. 예문 - 해석",
                 "2. 예문 - 해석",
@@ -158,15 +157,19 @@ class MultiAIEngine:
         file_type = uploaded_file.name.split('.')[-1].lower()
         if file_type == 'pdf':
             pdf_reader = PdfReader(uploaded_file)
-            for page in pdf_reader.pages: text += page.extract_text() + " "
+            for page in pdf_reader.pages: text += page.extract_text() + "\n"
         elif file_type == 'docx':
             doc = Document(io.BytesIO(uploaded_file.read()))
-            for para in doc.paragraphs: text += para.text + " "
+            for para in doc.paragraphs: text += para.text + "\n"
         return text
 
-    def split_into_sentences(self, text):
-        sentences = re.split(r'(?<=[.!?]) +', text.strip().replace('\n', ' '))
-        return [s.strip() for s in sentences if len(s.strip()) > 5]
+    def split_into_sentences(self, text, split_mode="마침표"):
+        if "줄바꿈" in split_mode:
+            lines = text.split('\n')
+            return [line.strip() for line in lines if len(line.strip()) > 2]
+        else:
+            sentences = re.split(r'(?<=[.!?]) +', text.strip().replace('\n', ' '))
+            return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 # ============================================================
 # [3] 150 핵심 패턴 데이터
@@ -256,7 +259,7 @@ with st.sidebar:
         with col_load:
             if st.button("📂 불러오기", use_container_width=True) and selected_doc != "선택하세요":
                 st.session_state.current_text = library[selected_doc]['text']
-                st.session_state.all_sentences = MultiAIEngine(selected_engine).split_into_sentences(st.session_state.current_text)
+                st.session_state.all_sentences = MultiAIEngine(selected_engine).split_into_sentences(st.session_state.current_text, "마침표")
                 st.session_state.current_page = 0
                 st.session_state.page_translations = {}
                 st.rerun()
@@ -268,7 +271,6 @@ with st.sidebar:
     else:
         st.info("아직 저장된 문서가 없습니다.")
 
-# 엔진 동적 생성
 tutor = MultiAIEngine(selected_engine)
 
 st.title(f"🎓 AI 영어 마스터")
@@ -285,14 +287,17 @@ with tabs[0]:
         file = st.file_uploader("파일을 올려주세요 (PDF, DOCX)", type=["pdf", "docx"])
         if file: temp_text = tutor.extract_text(file)
     else:
-        temp_text = st.text_area("영어 문장을 붙여넣으세요", height=100)
+        temp_text = st.text_area("영어 문장이나 대본을 붙여넣으세요", height=100)
+
+    st.write("---")
+    split_mode = st.radio("✂️ 문장 나누기 기준", ["마침표 기준 (일반 문서, 소설 등)", "줄바꿈 기준 (대본, 자막 등)"], horizontal=True)
 
     if temp_text:
         col_apply, col_save, _ = st.columns([2, 2, 6])
         with col_apply:
             if st.button("🚀 이 문서 분석 시작", type="primary"):
                 st.session_state.current_text = temp_text
-                st.session_state.all_sentences = tutor.split_into_sentences(temp_text)
+                st.session_state.all_sentences = tutor.split_into_sentences(temp_text, split_mode)
                 st.session_state.current_page = 0
                 st.session_state.page_translations = {}
                 st.rerun()
@@ -330,12 +335,13 @@ with tabs[0]:
         })
         
         st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 분석이 나옵니다)")
-        # 🚨 [핵심 수정] 인덱스를 숨기고 No 컬럼 너비를 최소화하여 깔끔한 넘버링 구현
+        
+        # 🚨 [수정 내용] 번호 칸 너비를 40픽셀로 아주 얇게 강제 고정했습니다!
         selection = st.dataframe(
             df, 
             hide_index=True,
             column_config={
-                "No.": st.column_config.NumberColumn("No.", width="small"),
+                "No.": st.column_config.NumberColumn("No.", width=40),
                 "English (원문)": st.column_config.TextColumn(width="large"),
                 "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
             },
@@ -365,14 +371,11 @@ with tabs[0]:
                 
                 c1, c2, c3 = st.columns(3)
                 
-                # 1. 문법 & 형식 (상세하게)
                 c1.success(f"📐 **문법 & 형식 상세 강의**\n\n{analysis.get('grammar', '정보 없음')}")
                 
-                # 2. 응용 예시 (3개 이상 강제)
                 examples_text = "\n\n".join([f"- {ex}" for ex in analysis.get('examples', [])])
                 c2.warning(f"💡 **응용 실전 예시**\n\n{examples_text}")
                 
-                # 3. 배경 & 발음 & 단어 (세분화 및 자연스러운 해석 추가)
                 bg = analysis.get('background', {})
                 bg_text = f"🎯 **자연스러운 해석:**\n{bg.get('translation', '정보 없음')}\n\n" \
                           f"🗣️ **원어민 발음:**\n{bg.get('pronunciation', '정보 없음')}\n\n" \
