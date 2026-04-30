@@ -71,7 +71,7 @@ def delete_from_library(title):
         with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] 하이브리드 멀티 AI 엔진 (Gemini vs Groq Llama3)
+# [2] 하이브리드 멀티 AI 엔진 (Gemini vs Groq Llama 3.1)
 # ============================================================
 class MultiAIEngine:
     def __init__(self, selected_engine):
@@ -86,12 +86,12 @@ class MultiAIEngine:
                 response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                 return response.text
 
-            elif self.engine_type == "Llama 3 (메타/초고속 무료)":
+            elif self.engine_type == "Llama 3.1 (메타/초고속 무료)":
                 if not GROQ_API_KEY: return "🚨 Groq API 키가 없습니다. Secrets에 추가해주세요."
                 client = Groq(api_key=GROQ_API_KEY)
-                # 초경량 8B 모델 사용 (에러 확률 극히 낮음)
+                # 🚀 지원 종료된 3.0 대신 최신형 Llama 3.1 엔진으로 교체 완료!
                 response = client.chat.completions.create(
-                    model="llama3-8b-8192",
+                    model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3
                 )
@@ -230,7 +230,7 @@ with st.sidebar:
     st.write("메인 엔진이 막히면 초고속 모델로 교체하세요!")
     selected_engine = st.radio(
         "사용할 무료 AI 모델:", 
-        ["Gemini 2.5 (구글/무료)", "Llama 3 (메타/초고속 무료)"]
+        ["Llama 3.1 (메타/초고속 무료)", "Gemini 2.5 (구글/무료)"] # Llama를 기본값으로 위로 올렸습니다.
     )
     
     st.divider()
