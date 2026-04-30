@@ -1,56 +1,64 @@
-# app.py
 import streamlit as st
+from google import genai
 import json
 import re
 import os
-import io
-import time
-import logging
-from datetime import datetime
-from typing import List, Dict, Any, Optional
 from PyPDF2 import PdfReader
 from docx import Document
-import math
+import io
 import pandas as pd
+from datetime import datetime
+import math
 
 # ============================================================
-# 기본 설정 및 로거
+# 🚨 화면 설정
 # ============================================================
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ai_english_master")
-
 # ============================================================
-# 보안 및 시크릿 확인
+# 🔐 보안 및 설정
 # ============================================================
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
-except Exception as e:
+except:
     st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다. 관리자에게 문의하세요.")
-    logger.exception("Missing secrets")
     st.stop()
 
 DB_FILE = "my_english_docs.json"
 
 # ============================================================
-# 파일 기반 DB 유틸리티 (간단한 JSON 저장소)
+# [로그인 시스템]
 # ============================================================
-def load_library() -> Dict[str, Any]:
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 나만의 영어 서재 (보안 접속)")
+    pwd = st.text_input("접속 비밀번호를 입력하세요:", type="password")
+    if st.button("접속하기"):
+        if pwd == str(APP_PASSWORD):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 틀렸습니다.")
+    st.stop()
+
+# ============================================================
+# [1] 데이터 관리 엔진
+# ============================================================
+def load_library():
     if not os.path.exists(DB_FILE):
         return {}
     try:
         with open(DB_FILE, "r", encoding="utf-8") as f:
             content = f.read()
-            if not content:
-                return {}
+            if not content: return {}
             return json.loads(content)
-    except Exception as e:
-        logger.exception("Failed to load library")
+    except:
         return {}
 
-def save_to_library(title: str, text: str) -> None:
+def save_to_library(title, text):
     data = load_library()
     data[title] = {
         "text": text,
@@ -59,7 +67,7 @@ def save_to_library(title: str, text: str) -> None:
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-def delete_from_library(title: str) -> None:
+def delete_from_library(title):
     data = load_library()
     if title in data:
         del data[title]
@@ -67,200 +75,88 @@ def delete_from_library(title: str) -> None:
             json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# LLM 래퍼: Gemini 호출을 중앙에서 관리 (재시도, 타임아웃, 파싱)
-# ============================================================
-# NOTE: google.genai 클라이언트는 환경에 따라 설치/버전 차이가 있으니
-# 실제 배포 환경에서 genai 패키지 문서를 확인하세요.
-try:
-    from google import genai
-except Exception:
-    genai = None
-    logger.warning("google.genai import failed. Ensure genai SDK is installed in the environment.")
-
-class LLMClient:
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
-        self.api_key = api_key
-        self.model = model
-        self.client = None
-        if genai:
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-            except Exception:
-                logger.exception("Failed to initialize genai.Client")
-                self.client = None
-
-    def call_llm(self, prompt: str, max_retries: int = 2, retry_delay: float = 1.0, timeout: float = 30.0) -> str:
-        """
-        중앙 LLM 호출 함수: 재시도, 예외 처리, 기본 타임아웃(내부 SDK가 지원하면 사용)
-        반환: raw text (str)
-        """
-        if not self.client:
-            raise RuntimeError("LLM client not initialized")
-
-        last_exc = None
-        for attempt in range(max_retries + 1):
-            try:
-                # genai SDK 호출 (동기)
-                # SDK의 실제 파라미터는 버전에 따라 다를 수 있으니 필요시 조정하세요.
-                response = self.client.models.generate_content(model=self.model, contents=prompt)
-                text = getattr(response, "text", None)
-                if text is None:
-                    # 일부 SDK는 response.output[0].content 등 다른 구조를 가질 수 있음
-                    text = str(response)
-                return text
-            except Exception as e:
-                last_exc = e
-                logger.warning("LLM call failed (attempt %s): %s", attempt + 1, str(e))
-                time.sleep(retry_delay * (attempt + 1))
-        logger.exception("LLM call failed after retries")
-        raise last_exc
-
-    @staticmethod
-    def extract_json_from_text(text: str) -> Optional[Dict]:
-        """
-        AI가 반환한 텍스트에서 JSON 객체를 안전하게 추출
-        """
-        if not text:
-            return None
-        # 먼저 ```json 블록 제거
-        clean = text.replace("```json", "").replace("```", "").strip()
-        # 가장 큰 중괄호 블록을 찾음
-        matches = re.findall(r'\{(?:[^{}]|(?R))*\}', clean, re.DOTALL)
-        if not matches:
-            # fallback: find first { ... } via simple regex
-            m = re.search(r'\{.*\}', clean, re.DOTALL)
-            if m:
-                try:
-                    return json.loads(m.group(0))
-                except Exception:
-                    return None
-            return None
-        # choose the longest match (likely the full JSON)
-        longest = max(matches, key=len)
-        try:
-            return json.loads(longest)
-        except Exception:
-            # 마지막 시도: replace single quotes -> double quotes (risky)
-            try:
-                alt = longest.replace("'", '"')
-                return json.loads(alt)
-            except Exception:
-                return None
-
-# ============================================================
-# 영어 튜터 엔진 (기존 기능을 안정적으로 래핑)
+# [2] AI 백엔드 엔진 
 # ============================================================
 class EnglishTutorEngine:
-    def __init__(self, llm_client: LLMClient):
-        self.llm = llm_client
+    def __init__(self):
+        self.client = genai.Client(api_key=GEMINI_API_KEY)
 
-    def bulk_translate(self, sentences: List[str]) -> List[str]:
-        if not sentences:
-            return []
+    def bulk_translate(self, sentences):
+        if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
-        prompt = (
-            "당신은 1:1 직독직해 전문 번역기입니다. 아래 JSON의 번호를 유지하며 영어 문장을 한국어로 번역하세요.\n"
-            f"입력 데이터: {json.dumps(dict_sentences, ensure_ascii=False)}\n"
-            "출력은 반드시 JSON 형식으로, 키는 입력과 동일한 숫자 문자열로 유지하세요."
-        )
+        prompt = f"""
+        당신은 1:1 직독직해 전문 번역기입니다. 아래 JSON의 번호를 유지하며 영어 문장을 한국어로 번역하세요.
+        입력 데이터: {json.dumps(dict_sentences)}
+        """
         try:
-            raw = self.llm.call_llm(prompt)
-            parsed = self.llm.extract_json_from_text(raw)
-            if parsed is None:
-                logger.warning("bulk_translate: JSON 파싱 실패, 원문 반환 시도")
-                # fallback: line-by-line naive translation placeholder
-                return ["번역 실패: AI 응답 파싱 불가"] * len(sentences)
-            # build list in order
-            result = [parsed.get(str(i), "번역 누락") for i in range(len(sentences))]
-            return result
-        except Exception as e:
-            logger.exception("bulk_translate error")
+            # 🚀 초경량 모델 적용
+            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+            if match: 
+                result_dict = json.loads(match.group(0))
+                return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
+            return ["파싱 실패 (AI 응답 오류)"] * len(sentences)
+        except Exception as e: 
             return [f"🚨 서버 통신 에러: {str(e)}"] * len(sentences)
 
-    def deep_analyze(self, text: str) -> Dict[str, Any]:
-        prompt = (
-            "당신은 초고속 영어 강사입니다. 아래 문장을 분석하여 순수 JSON으로 응답하세요. 단일 텍스트 문자열(String)로만 작성하세요.\n"
-            '{\n'
-            '  "grammar": "문법 강의 및 형식",\n'
-            '  "examples": "비슷한 예시 2~3개와 해석",\n'
-            '  "background": "주요 단어 뜻, 자연스러운 한글 발음"\n'
-            '}\n'
-            f'문장: "{text}"\n'
-            "출력은 반드시 JSON 객체 하나로만 응답하세요."
-        )
+    def deep_analyze(self, text):
+        prompt = f"""
+        당신은 초고속 영어 강사입니다. 아래 문장을 분석하여 순수 JSON으로 응답하세요. 단일 텍스트 문자열(String)로만 작성하세요.
+        {{
+            "grammar": "문법 강의 및 형식",
+            "examples": "비슷한 예시 2~3개와 해석",
+            "background": "주요 단어 뜻, 자연스러운 한글 발음"
+        }}
+        문장: "{text}"
+        """
         try:
-            raw = self.llm.call_llm(prompt)
-            parsed = self.llm.extract_json_from_text(raw)
-            if parsed is None:
-                logger.warning("deep_analyze: JSON 파싱 실패")
-                return {"grammar": "파싱 실패", "examples": "파싱 실패", "background": "파싱 실패"}
-            return parsed
-        except Exception as e:
-            logger.exception("deep_analyze error")
+            # 🚀 초경량 모델 적용
+            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+            return json.loads(match.group(0)) if match else {}
+        except Exception as e: 
             return {"grammar": "에러", "examples": "에러", "background": f"🚨 상세 에러: {str(e)}"}
 
-    def get_pattern_study(self, pattern_text: str) -> Dict[str, Any]:
-        prompt = (
-            f"당신은 영어 전문가입니다. 패턴 '{pattern_text}'에 대한 설명과 실전 예문 10개를 순수 JSON으로 작성하세요.\n"
-            '{\n'
-            '  "explanation": "이 패턴의 뉘앙스 설명",\n'
-            '  "examples": ["1. 영어 - 한국어", "2. 영어 - 한국어", "3. 영어 - 한국어", "4. 영어 - 한국어", "5. 영어 - 한국어", "6. 영어 - 한국어", "7. 영어 - 한국어", "8. 영어 - 한국어", "9. 영어 - 한국어", "10. 영어 - 한국어"]\n'
-            '}\n'
-            "출력은 반드시 JSON 객체 하나로만 응답하세요."
-        )
+    def get_pattern_study(self, pattern_text):
+        prompt = f"""
+        당신은 영어 전문가입니다. 패턴 '{pattern_text}'에 대한 설명과 실전 예문 10개를 순수 JSON으로 작성하세요.
+        {{
+            "explanation": "이 패턴의 뉘앙스 설명",
+            "examples": ["1. 영어 - 한국어", "2. 영어 - 한국어", "3. 영어 - 한국어", "4. 영어 - 한국어", "5. 영어 - 한국어", "6. 영어 - 한국어", "7. 영어 - 한국어", "8. 영어 - 한국어", "9. 영어 - 한국어", "10. 영어 - 한국어"]
+        }}
+        """
         try:
-            raw = self.llm.call_llm(prompt)
-            parsed = self.llm.extract_json_from_text(raw)
-            if parsed is None:
-                logger.warning("get_pattern_study: JSON 파싱 실패")
-                return {"explanation": "형식 이탈", "examples": []}
-            return parsed
-        except Exception as e:
-            logger.exception("get_pattern_study error")
+            # 🚀 초경량 모델 적용
+            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+            if match: return json.loads(match.group(0))
+            return {"explanation": "형식 이탈", "examples": []}
+        except Exception as e: 
             return {"explanation": f"🚨 통신 에러: {str(e)}", "examples": []}
 
-    def extract_text(self, uploaded_file) -> str:
+    def extract_text(self, uploaded_file):
         text = ""
-        try:
-            file_type = uploaded_file.name.split('.')[-1].lower()
-            if file_type == 'pdf':
-                pdf_reader = PdfReader(uploaded_file)
-                for page in pdf_reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + " "
-            elif file_type == 'docx':
-                # docx: read bytes safely
-                uploaded_file.seek(0)
-                doc = Document(io.BytesIO(uploaded_file.read()))
-                for para in doc.paragraphs:
-                    if para.text:
-                        text += para.text + " "
-            else:
-                # fallback: try reading as text
-                uploaded_file.seek(0)
-                try:
-                    text = uploaded_file.read().decode('utf-8')
-                except Exception:
-                    text = ""
-        except Exception as e:
-            logger.exception("extract_text error")
-            return ""
-        return text.strip()
+        file_type = uploaded_file.name.split('.')[-1].lower()
+        if file_type == 'pdf':
+            pdf_reader = PdfReader(uploaded_file)
+            for page in pdf_reader.pages: text += page.extract_text() + " "
+        elif file_type == 'docx':
+            doc = Document(io.BytesIO(uploaded_file.read()))
+            for para in doc.paragraphs: text += para.text + " "
+        return text
 
-    def split_into_sentences(self, text: str) -> List[str]:
-        if not text:
-            return []
-        # 간단한 문장 분리: 마침표/물음표/느낌표 기준 + 줄바꿈 제거
-        sentences = re.split(r'(?<=[.!?])\s+', text.replace('\r', ' ').replace('\n', ' '))
-        cleaned = [s.strip() for s in sentences if len(s.strip()) > 5]
-        return cleaned
+    def split_into_sentences(self, text):
+        sentences = re.split(r'(?<=[.!?]) +', text.strip().replace('\n', ' '))
+        return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 # ============================================================
-# 150 패턴 데이터 (변경 없음, 캐시 적용)
+# [3] 150 핵심 패턴 데이터
 # ============================================================
 @st.cache_data
-def get_unique_150_patterns() -> List[str]:
+def get_unique_150_patterns():
     patterns = [
         "I am ~ (나는 ~상태야)", "I'm getting ~ (나는 점점 ~해지고 있어)", "I'm trying to ~ (나는 ~하려고 노력 중이야)",
         "I'm looking forward to ~ (나는 ~이 너무 기대돼)", "I'm planning to ~ (나는 ~할 계획이야)", "I'm worried about ~ (나는 ~가 걱정돼)",
@@ -316,40 +212,26 @@ def get_unique_150_patterns() -> List[str]:
     return [f"Day {i+1:03d} : {p}" for i, p in enumerate(patterns)]
 
 # ============================================================
-# 세션 초기화 및 UI 메인
+# [4] 세션 초기화 및 UI 메인
 # ============================================================
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.title("🔒 나만의 영어 서재 (보안 접속)")
-    pwd = st.text_input("접속 비밀번호를 입력하세요:", type="password")
-    if st.button("접속하기"):
-        if pwd == str(APP_PASSWORD):
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("비밀번호가 틀렸습니다.")
-    st.stop()
-
 if 'study_log' not in st.session_state: st.session_state.study_log = []
 if 'all_sentences' not in st.session_state: st.session_state.all_sentences = []
 if 'current_text' not in st.session_state: st.session_state.current_text = ""
 if 'current_page' not in st.session_state: st.session_state.current_page = 0
 if 'page_translations' not in st.session_state: st.session_state.page_translations = {}
 
-# LLM 클라이언트 및 튜터 엔진 초기화
-llm_client = LLMClient(api_key=GEMINI_API_KEY, model="gemini-2.5-flash")
-tutor = EnglishTutorEngine(llm_client)
+tutor = EnglishTutorEngine()
 
-# ---------------- Sidebar: Library ----------------
+# 🗂️ 사이드바: 나만의 서재
 with st.sidebar:
     st.header("📚 나만의 서재")
     st.write("저장된 문서를 불러오세요.")
+    
     library = load_library()
     if library:
         saved_titles = list(library.keys())
         selected_doc = st.selectbox("저장된 문서 목록", ["선택하세요"] + saved_titles)
+        
         col_load, col_del = st.columns(2)
         with col_load:
             if st.button("📂 불러오기", use_container_width=True) and selected_doc != "선택하세요":
@@ -367,20 +249,17 @@ with st.sidebar:
         st.info("아직 저장된 문서가 없습니다.")
 
 st.title("🎓 AI 영어 전문가 마스터 시스템")
+
 tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
-# ---------------- Tab 1: Document Analysis ----------------
 with tabs[0]:
     st.subheader("새 문서 업로드 및 분석")
     mode = st.radio("입력 방식", ["파일 첨부", "텍스트 직접 입력"], horizontal=True)
+    
     temp_text = ""
     if mode == "파일 첨부":
         file = st.file_uploader("파일을 올려주세요 (PDF, DOCX)", type=["pdf", "docx"])
-        if file:
-            with st.spinner("파일을 추출 중입니다..."):
-                temp_text = tutor.extract_text(file)
-                if not temp_text:
-                    st.warning("파일에서 텍스트를 추출하지 못했습니다. 다른 파일을 시도해 주세요.")
+        if file: temp_text = tutor.extract_text(file)
     else:
         temp_text = st.text_area("영어 문장을 붙여넣으세요", height=100)
 
@@ -417,9 +296,9 @@ with tabs[0]:
         if current_page not in st.session_state.page_translations:
             with st.spinner("AI가 1:1 직독직해 중입니다..."):
                 st.session_state.page_translations[current_page] = tutor.bulk_translate(current_chunk)
-
+        
         translations = st.session_state.page_translations[current_page]
-
+        
         df = pd.DataFrame({
             "No.": range(start_idx + 1, end_idx + 1),
             "English (원문)": current_chunk,
@@ -429,7 +308,7 @@ with tabs[0]:
 
         st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 분석이 나옵니다)")
         selection = st.dataframe(
-            df,
+            df, 
             column_config={
                 "English (원문)": st.column_config.TextColumn(width="large"),
                 "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
@@ -450,8 +329,7 @@ with tabs[0]:
                 st.rerun()
 
         def dict_to_text(data):
-            if isinstance(data, dict):
-                return "\n\n".join([f"- **{k}**: {v}" for k, v in data.items()])
+            if isinstance(data, dict): return "\n\n".join([f"- **{k}**: {v}" for k, v in data.items()])
             return str(data).replace("\\n", "\n")
 
         selected_rows = selection.get("selection", {}).get("rows", [])
@@ -460,7 +338,7 @@ with tabs[0]:
             st.divider()
             st.markdown(f"### 🕵️‍♂️ 심층 리포트")
             st.info(f"**📖 원문:** {target_s}\n\n**💡 해석:** {translations[selected_rows[0]]}")
-
+            
             with st.spinner("초고속 분석 중..."):
                 analysis = tutor.deep_analyze(target_s)
                 c1, c2, c3 = st.columns(3)
@@ -468,13 +346,13 @@ with tabs[0]:
                 c2.warning(f"💡 **응용 예시**\n\n{dict_to_text(analysis.get('examples'))}")
                 c3.error(f"🌍 **배경 & 발음 & 단어**\n\n{dict_to_text(analysis.get('background'))}")
 
-# ---------------- Tab 2: 150 Patterns ----------------
 with tabs[1]:
     st.subheader("🚀 150 핵심 패턴 정복")
     all_patterns = get_unique_150_patterns()
+    
     with st.container(height=350):
         selected_p = st.radio("패턴 리스트", all_patterns, label_visibility="collapsed")
-
+    
     if st.button("이 패턴 집중 공략하기 🚀"):
         with st.spinner("AI가 10개의 맞춤 예문을 생성 중입니다..."):
             p_data = tutor.get_pattern_study(selected_p)
@@ -487,7 +365,7 @@ with tabs[1]:
         st.write("#### ✍️ 실전 예문 10선")
         for ex in st.session_state.p_study.get("examples", []):
             st.write(f"- {ex}")
-
+        
         st.divider()
         if st.checkbox("✅ 오늘 이 패턴 마스터!"):
             st.balloons()
@@ -495,7 +373,6 @@ with tabs[1]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "패턴 집중 학습", "내용": st.session_state.p_title})
                 st.success("달력에 저장되었습니다!")
 
-# ---------------- Tab 3: Study Log ----------------
 with tabs[2]:
     st.subheader("📅 나의 학습 히스토리")
     if st.session_state.study_log:
