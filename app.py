@@ -76,7 +76,7 @@ def delete_from_library(title):
             json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] AI 백엔드 엔진 (🔥 서버 폭주를 피하기 위해 안정적인 1.5-flash 모델로 교체!)
+# [2] AI 백엔드 엔진 (🔥 503, 404 에러를 피하는 2.0-flash 모델 적용)
 # ============================================================
 class EnglishTutorEngine:
     def __init__(self):
@@ -90,8 +90,8 @@ class EnglishTutorEngine:
         입력 데이터: {json.dumps(dict_sentences)}
         """
         try:
-            # 🚨 2.5 대신 1.5 엔진을 사용하여 트래픽 우회
-            response = self.client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+            # 🚨 안정적인 2.0 엔진으로 수정 완료
+            response = self.client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: 
@@ -113,8 +113,8 @@ class EnglishTutorEngine:
         문장: "{text}"
         """
         try:
-            # 🚨 2.5 대신 1.5 엔진을 사용하여 트래픽 우회
-            response = self.client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+            # 🚨 안정적인 2.0 엔진으로 수정 완료
+            response = self.client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             return json.loads(match.group(0)) if match else {}
@@ -131,8 +131,8 @@ class EnglishTutorEngine:
         }}
         """
         try:
-            # 🚨 2.5 대신 1.5 엔진을 사용하여 트래픽 우회
-            response = self.client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+            # 🚨 안정적인 2.0 엔진으로 수정 완료
+            response = self.client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: return json.loads(match.group(0))
