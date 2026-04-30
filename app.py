@@ -97,11 +97,17 @@ class EnglishTutorEngine:
 
 # 데이터 관리 함수들
 def load_library():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
-    return {}
+    # 파일이 없으면 에러를 내지 않고 빈 데이터를 반환하게 수정
+    if not os.path.exists(DB_FILE):
+        return {}
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+            if not content: return {} # 파일이 비어있는 경우 대비
+            return json.loads(content)
+    except Exception as e:
+        print(f"라이브러리 로드 오류: {e}")
+        return {}
 
 def save_to_library(title, text):
     data = load_library()
