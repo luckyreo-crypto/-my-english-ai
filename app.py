@@ -75,7 +75,7 @@ def delete_from_library(title):
             json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] AI 백엔드 엔진 (🔥 세상에서 가장 가벼운 gemini-1.5-flash-8b 적용!)
+# [2] AI 백엔드 엔진 
 # ============================================================
 class EnglishTutorEngine:
     def __init__(self):
@@ -90,7 +90,7 @@ class EnglishTutorEngine:
         """
         try:
             # 🚀 초경량 모델 적용
-            response = self.client.models.generate_content(model='gemini-1.5-flash-8b', contents=prompt)
+            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: 
@@ -112,7 +112,7 @@ class EnglishTutorEngine:
         """
         try:
             # 🚀 초경량 모델 적용
-            response = self.client.models.generate_content(model='gemini-1.5-flash-8b', contents=prompt)
+            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             return json.loads(match.group(0)) if match else {}
@@ -129,7 +129,7 @@ class EnglishTutorEngine:
         """
         try:
             # 🚀 초경량 모델 적용
-            response = self.client.models.generate_content(model='gemini-1.5-flash-8b', contents=prompt)
+            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: return json.loads(match.group(0))
