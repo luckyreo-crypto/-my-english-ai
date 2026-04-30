@@ -11,25 +11,24 @@ from datetime import datetime
 import math
 
 # ============================================================
-# 🚨 화면 설정은 무조건 맨 위에 있어야 합니다
+# 🚨 화면 설정
 # ============================================================
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
 # ============================================================
-# 🔐 보안 및 설정 (Streamlit Secrets 사용)
+# 🔐 보안 및 설정
 # ============================================================
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
 except:
-    st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다. Streamlit Cloud 설정(Settings -> Secrets)에 API 키와 비밀번호를 입력해주세요.")
+    st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다. 관리자에게 문의하세요.")
     st.stop()
 
-# 🗄️ 데이터베이스 파일
 DB_FILE = "my_english_docs.json"
 
 # ============================================================
-# [로그인 시스템] 타인 접속 차단
+# [로그인 시스템]
 # ============================================================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -76,7 +75,7 @@ def delete_from_library(title):
             json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] AI 백엔드 엔진 (🔥 503, 404 에러를 피하는 2.0-flash 모델 적용)
+# [2] AI 백엔드 엔진 (🔥 세상에서 가장 가벼운 gemini-1.5-flash-8b 적용!)
 # ============================================================
 class EnglishTutorEngine:
     def __init__(self):
@@ -90,55 +89,53 @@ class EnglishTutorEngine:
         입력 데이터: {json.dumps(dict_sentences)}
         """
         try:
-            # 🚨 안정적인 2.0 엔진으로 수정 완료
-            response = self.client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            # 🚀 초경량 모델 적용
+            response = self.client.models.generate_content(model='gemini-1.5-flash-8b', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: 
                 result_dict = json.loads(match.group(0))
                 return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
-            return ["파싱 실패 (AI가 엉뚱한 대답을 했습니다)"] * len(sentences)
+            return ["파싱 실패 (AI 응답 오류)"] * len(sentences)
         except Exception as e: 
-            return [f"🚨 통신/서버 에러: {str(e)}"] * len(sentences)
+            return [f"🚨 서버 통신 에러: {str(e)}"] * len(sentences)
 
     def deep_analyze(self, text):
         prompt = f"""
-        당신은 초고속 영어 일타 강사입니다. 아래 문장을 분석하여 순수 JSON으로 응답하세요.
-        주의: 배열이나 객체를 쓰지 말고 단일 텍스트 문자열(String)로만 작성하세요.
+        당신은 초고속 영어 강사입니다. 아래 문장을 분석하여 순수 JSON으로 응답하세요. 단일 텍스트 문자열(String)로만 작성하세요.
         {{
-            "grammar": "문법 강의 및 몇 형식인지 설명",
-            "examples": "비슷한 예시 문장 2~3개와 해석",
-            "background": "배경지식, 주요 단어/숙어 뜻, 자연스러운 한글 발음 표기"
+            "grammar": "문법 강의 및 형식",
+            "examples": "비슷한 예시 2~3개와 해석",
+            "background": "주요 단어 뜻, 자연스러운 한글 발음"
         }}
         문장: "{text}"
         """
         try:
-            # 🚨 안정적인 2.0 엔진으로 수정 완료
-            response = self.client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            # 🚀 초경량 모델 적용
+            response = self.client.models.generate_content(model='gemini-1.5-flash-8b', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             return json.loads(match.group(0)) if match else {}
         except Exception as e: 
-            return {"grammar": "에러 발생", "examples": "에러 발생", "background": f"🚨 상세 에러: {str(e)}"}
+            return {"grammar": "에러", "examples": "에러", "background": f"🚨 상세 에러: {str(e)}"}
 
     def get_pattern_study(self, pattern_text):
         prompt = f"""
-        당신은 영어 패턴 전문가입니다. 영어 패턴 '{pattern_text}'에 대한 상세 설명과 현지인들이 쓰는 실전 예문 10개를 작성하세요.
-        반드시 아래 구조의 순수 JSON 형식으로만 대답하세요.
+        당신은 영어 전문가입니다. 패턴 '{pattern_text}'에 대한 설명과 실전 예문 10개를 순수 JSON으로 작성하세요.
         {{
-            "explanation": "이 패턴이 쓰이는 상황과 문법적 뉘앙스 설명",
+            "explanation": "이 패턴의 뉘앙스 설명",
             "examples": ["1. 영어 - 한국어", "2. 영어 - 한국어", "3. 영어 - 한국어", "4. 영어 - 한국어", "5. 영어 - 한국어", "6. 영어 - 한국어", "7. 영어 - 한국어", "8. 영어 - 한국어", "9. 영어 - 한국어", "10. 영어 - 한국어"]
         }}
         """
         try:
-            # 🚨 안정적인 2.0 엔진으로 수정 완료
-            response = self.client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            # 🚀 초경량 모델 적용
+            response = self.client.models.generate_content(model='gemini-1.5-flash-8b', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: return json.loads(match.group(0))
-            return {"explanation": "형식 이탈 (다시 시도해주세요)", "examples": []}
+            return {"explanation": "형식 이탈", "examples": []}
         except Exception as e: 
-            return {"explanation": f"🚨 서버 통신 에러: {str(e)}", "examples": []}
+            return {"explanation": f"🚨 통신 에러: {str(e)}", "examples": []}
 
     def extract_text(self, uploaded_file):
         text = ""
@@ -228,7 +225,7 @@ tutor = EnglishTutorEngine()
 # 🗂️ 사이드바: 나만의 서재
 with st.sidebar:
     st.header("📚 나만의 서재")
-    st.write("저장된 문서를 언제든 다시 불러오세요.")
+    st.write("저장된 문서를 불러오세요.")
     
     library = load_library()
     if library:
@@ -255,7 +252,6 @@ st.title("🎓 AI 영어 전문가 마스터 시스템")
 
 tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
-# --- 탭 1: 문서 분석 ---
 with tabs[0]:
     st.subheader("새 문서 업로드 및 분석")
     mode = st.radio("입력 방식", ["파일 첨부", "텍스트 직접 입력"], horizontal=True)
@@ -350,7 +346,6 @@ with tabs[0]:
                 c2.warning(f"💡 **응용 예시**\n\n{dict_to_text(analysis.get('examples'))}")
                 c3.error(f"🌍 **배경 & 발음 & 단어**\n\n{dict_to_text(analysis.get('background'))}")
 
-# --- 탭 2: 150 핵심 패턴 ---
 with tabs[1]:
     st.subheader("🚀 150 핵심 패턴 정복")
     all_patterns = get_unique_150_patterns()
@@ -378,7 +373,6 @@ with tabs[1]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "패턴 집중 학습", "내용": st.session_state.p_title})
                 st.success("달력에 저장되었습니다!")
 
-# --- 탭 3: 일정 관리 ---
 with tabs[2]:
     st.subheader("📅 나의 학습 히스토리")
     if st.session_state.study_log:
