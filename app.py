@@ -11,7 +11,7 @@ from datetime import datetime
 import math
 
 # ============================================================
-# 🚨 [가장 중요] 화면 설정은 무조건 코드 맨 위에 있어야 화면이 안 깨집니다!
+# 🚨 [가장 중요] 화면 설정은 무조건 코드 맨 위에 있어야 합니다!
 # ============================================================
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
@@ -38,7 +38,7 @@ if not st.session_state.authenticated:
     st.title("🔒 나만의 영어 서재 (보안 접속)")
     pwd = st.text_input("접속 비밀번호를 입력하세요:", type="password")
     if st.button("접속하기"):
-        if pwd == str(APP_PASSWORD): # 문자/숫자 오류 방지를 위해 str() 적용
+        if pwd == str(APP_PASSWORD):
             st.session_state.authenticated = True
             st.rerun()
         else:
@@ -46,7 +46,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (파일 저장/불러오기/삭제 - 안전장치 추가)
+# [1] 데이터 관리 엔진 (파일 저장/불러오기/삭제)
 # ============================================================
 def load_library():
     if not os.path.exists(DB_FILE):
@@ -76,7 +76,7 @@ def delete_from_library(title):
             json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] AI 백엔드 엔진
+# [2] AI 백엔드 엔진 (🔥 상세 에러 탐지 기능 추가 완료)
 # ============================================================
 class EnglishTutorEngine:
     def __init__(self):
@@ -96,8 +96,9 @@ class EnglishTutorEngine:
             if match: 
                 result_dict = json.loads(match.group(0))
                 return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
-            return ["파싱 실패"] * len(sentences)
-        except: return ["통신 에러"] * len(sentences)
+            return ["파싱 실패 (AI가 엉뚱한 대답을 했습니다)"] * len(sentences)
+        except Exception as e: 
+            return [f"🚨 통신/서버 에러: {str(e)}"] * len(sentences)
 
     def deep_analyze(self, text):
         prompt = f"""
@@ -115,7 +116,8 @@ class EnglishTutorEngine:
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             return json.loads(match.group(0)) if match else {}
-        except: return {"grammar": "오류", "examples": "오류", "background": "오류"}
+        except Exception as e: 
+            return {"grammar": "에러 발생", "examples": "에러 발생", "background": f"🚨 상세 에러: {str(e)}"}
 
     def get_pattern_study(self, pattern_text):
         prompt = f"""
@@ -132,7 +134,8 @@ class EnglishTutorEngine:
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: return json.loads(match.group(0))
             return {"explanation": "형식 이탈 (다시 시도해주세요)", "examples": []}
-        except: return {"explanation": "통신 오류", "examples": []}
+        except Exception as e: 
+            return {"explanation": f"🚨 서버 통신 에러: {str(e)}", "examples": []}
 
     def extract_text(self, uploaded_file):
         text = ""
@@ -149,6 +152,9 @@ class EnglishTutorEngine:
         sentences = re.split(r'(?<=[.!?]) +', text.strip().replace('\n', ' '))
         return [s.strip() for s in sentences if len(s.strip()) > 5]
 
+# ============================================================
+# [3] 150 핵심 패턴 데이터
+# ============================================================
 @st.cache_data
 def get_unique_150_patterns():
     patterns = [
@@ -205,14 +211,15 @@ def get_unique_150_patterns():
     ]
     return [f"Day {i+1:03d} : {p}" for i, p in enumerate(patterns)]
 
-# [3] 세션 초기화
+# ============================================================
+# [4] 세션 초기화 및 UI 메인
+# ============================================================
 if 'study_log' not in st.session_state: st.session_state.study_log = []
 if 'all_sentences' not in st.session_state: st.session_state.all_sentences = []
 if 'current_text' not in st.session_state: st.session_state.current_text = ""
 if 'current_page' not in st.session_state: st.session_state.current_page = 0
 if 'page_translations' not in st.session_state: st.session_state.page_translations = {}
 
-# [4] UI 화면 구성
 tutor = EnglishTutorEngine()
 
 # 🗂️ 사이드바: 나만의 서재
@@ -245,6 +252,7 @@ st.title("🎓 AI 영어 전문가 마스터 시스템")
 
 tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
+# --- 탭 1: 문서 분석 ---
 with tabs[0]:
     st.subheader("새 문서 업로드 및 분석")
     mode = st.radio("입력 방식", ["파일 첨부", "텍스트 직접 입력"], horizontal=True)
@@ -339,6 +347,7 @@ with tabs[0]:
                 c2.warning(f"💡 **응용 예시**\n\n{dict_to_text(analysis.get('examples'))}")
                 c3.error(f"🌍 **배경 & 발음 & 단어**\n\n{dict_to_text(analysis.get('background'))}")
 
+# --- 탭 2: 150 핵심 패턴 ---
 with tabs[1]:
     st.subheader("🚀 150 핵심 패턴 정복")
     all_patterns = get_unique_150_patterns()
@@ -366,6 +375,7 @@ with tabs[1]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "패턴 집중 학습", "내용": st.session_state.p_title})
                 st.success("달력에 저장되었습니다!")
 
+# --- 탭 3: 일정 관리 ---
 with tabs[2]:
     st.subheader("📅 나의 학습 히스토리")
     if st.session_state.study_log:
