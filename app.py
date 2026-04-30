@@ -11,7 +11,7 @@ from datetime import datetime
 import math
 
 # ============================================================
-# 🚨 [가장 중요] 화면 설정은 무조건 코드 맨 위에 있어야 합니다!
+# 🚨 화면 설정은 무조건 맨 위에 있어야 합니다
 # ============================================================
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
@@ -46,7 +46,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (파일 저장/불러오기/삭제)
+# [1] 데이터 관리 엔진
 # ============================================================
 def load_library():
     if not os.path.exists(DB_FILE):
@@ -76,7 +76,7 @@ def delete_from_library(title):
             json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] AI 백엔드 엔진 (🔥 상세 에러 탐지 기능 추가 완료)
+# [2] AI 백엔드 엔진 (🔥 서버 폭주를 피하기 위해 안정적인 1.5-flash 모델로 교체!)
 # ============================================================
 class EnglishTutorEngine:
     def __init__(self):
@@ -90,7 +90,8 @@ class EnglishTutorEngine:
         입력 데이터: {json.dumps(dict_sentences)}
         """
         try:
-            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            # 🚨 2.5 대신 1.5 엔진을 사용하여 트래픽 우회
+            response = self.client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: 
@@ -112,7 +113,8 @@ class EnglishTutorEngine:
         문장: "{text}"
         """
         try:
-            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            # 🚨 2.5 대신 1.5 엔진을 사용하여 트래픽 우회
+            response = self.client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             return json.loads(match.group(0)) if match else {}
@@ -129,7 +131,8 @@ class EnglishTutorEngine:
         }}
         """
         try:
-            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            # 🚨 2.5 대신 1.5 엔진을 사용하여 트래픽 우회
+            response = self.client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             if match: return json.loads(match.group(0))
