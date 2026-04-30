@@ -10,19 +10,23 @@ import pandas as pd
 from datetime import datetime
 import math
 
+# 새롭게 추가된 초고속 무료 AI 라이브러리
+from groq import Groq
+
 # ============================================================
 # 🚨 화면 설정
 # ============================================================
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
 # ============================================================
-# 🔐 보안 및 설정
+# 🔐 보안 및 설정 (키가 없어도 에러 나지 않게 처리)
 # ============================================================
 try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
+    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 except:
-    st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다. 관리자에게 문의하세요.")
+    st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다.")
     st.stop()
 
 DB_FILE = "my_english_docs.json"
@@ -48,94 +52,94 @@ if not st.session_state.authenticated:
 # [1] 데이터 관리 엔진
 # ============================================================
 def load_library():
-    if not os.path.exists(DB_FILE):
-        return {}
+    if not os.path.exists(DB_FILE): return {}
     try:
         with open(DB_FILE, "r", encoding="utf-8") as f:
             content = f.read()
-            if not content: return {}
-            return json.loads(content)
-    except:
-        return {}
+            return json.loads(content) if content else {}
+    except: return {}
 
 def save_to_library(title, text):
     data = load_library()
-    data[title] = {
-        "text": text,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    data[title] = {"text": text, "date": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
 def delete_from_library(title):
     data = load_library()
     if title in data:
         del data[title]
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
+        with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] AI 백엔드 엔진 
+# [2] 하이브리드 멀티 AI 엔진 (Gemini vs Groq Llama3)
 # ============================================================
-class EnglishTutorEngine:
-    def __init__(self):
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
+class MultiAIEngine:
+    def __init__(self, selected_engine):
+        self.engine_type = selected_engine
 
+    def _call_ai(self, prompt):
+        """선택된 엔진에 맞춰 자동으로 API를 호출하는 마스터 스위치"""
+        try:
+            if self.engine_type == "Gemini 2.5 (구글/무료)":
+                if not GEMINI_API_KEY: return "🚨 Gemini API 키가 없습니다."
+                client = genai.Client(api_key=GEMINI_API_KEY)
+                response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                return response.text
+
+            elif self.engine_type == "Llama 3 (메타/초고속 무료)":
+                if not GROQ_API_KEY: return "🚨 Groq API 키가 없습니다. Secrets에 추가해주세요."
+                client = Groq(api_key=GROQ_API_KEY)
+                # 초경량 8B 모델 사용 (에러 확률 극히 낮음)
+                response = client.chat.completions.create(
+                    model="llama3-8b-8192",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3
+                )
+                return response.choices[0].message.content
+
+        except Exception as e:
+            return f"🚨 {self.engine_type} 서버 에러: {str(e)}"
+
+    # --- 공통 기능 로직 ---
     def bulk_translate(self, sentences):
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
-        prompt = f"""
-        당신은 1:1 직독직해 전문 번역기입니다. 아래 JSON의 번호를 유지하며 영어 문장을 한국어로 번역하세요.
-        입력 데이터: {json.dumps(dict_sentences)}
-        """
-        try:
-            # 🚀 초경량 모델 적용
-            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
-            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-            if match: 
-                result_dict = json.loads(match.group(0))
-                return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
-            return ["파싱 실패 (AI 응답 오류)"] * len(sentences)
-        except Exception as e: 
-            return [f"🚨 서버 통신 에러: {str(e)}"] * len(sentences)
+        prompt = f"당신은 번역기입니다. 아래 JSON의 번호를 유지하며 영어 문장을 한국어로 번역해 순수 JSON으로 답하세요.\n{json.dumps(dict_sentences)}"
+        
+        raw_text = self._call_ai(prompt)
+        if "🚨" in raw_text: return [raw_text] * len(sentences)
+        
+        clean_text = raw_text.replace("```json", "").replace("```", "").strip()
+        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+        if match: 
+            result_dict = json.loads(match.group(0))
+            return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
+        return ["파싱 실패 (AI 응답 오류)"] * len(sentences)
 
     def deep_analyze(self, text):
         prompt = f"""
-        당신은 초고속 영어 강사입니다. 아래 문장을 분석하여 순수 JSON으로 응답하세요. 단일 텍스트 문자열(String)로만 작성하세요.
-        {{
-            "grammar": "문법 강의 및 형식",
-            "examples": "비슷한 예시 2~3개와 해석",
-            "background": "주요 단어 뜻, 자연스러운 한글 발음"
-        }}
+        아래 영어 문장을 분석하여 순수 JSON으로 응답하세요. 값은 반드시 단일 문자열(String)이어야 합니다.
+        {{"grammar": "문법 및 형식", "examples": "예시 2~3개와 해석", "background": "단어 뜻, 한글 발음"}}
         문장: "{text}"
         """
-        try:
-            # 🚀 초경량 모델 적용
-            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
-            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-            return json.loads(match.group(0)) if match else {}
-        except Exception as e: 
-            return {"grammar": "에러", "examples": "에러", "background": f"🚨 상세 에러: {str(e)}"}
+        raw_text = self._call_ai(prompt)
+        if "🚨" in raw_text: return {"grammar": "에러", "examples": "에러", "background": raw_text}
+        
+        clean_text = raw_text.replace("```json", "").replace("```", "").strip()
+        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+        return json.loads(match.group(0)) if match else {"grammar": "에러", "examples": "에러", "background": "파싱 실패"}
 
     def get_pattern_study(self, pattern_text):
         prompt = f"""
-        당신은 영어 전문가입니다. 패턴 '{pattern_text}'에 대한 설명과 실전 예문 10개를 순수 JSON으로 작성하세요.
-        {{
-            "explanation": "이 패턴의 뉘앙스 설명",
-            "examples": ["1. 영어 - 한국어", "2. 영어 - 한국어", "3. 영어 - 한국어", "4. 영어 - 한국어", "5. 영어 - 한국어", "6. 영어 - 한국어", "7. 영어 - 한국어", "8. 영어 - 한국어", "9. 영어 - 한국어", "10. 영어 - 한국어"]
-        }}
+        패턴 '{pattern_text}'에 대한 설명과 예문 10개를 순수 JSON으로 작성하세요.
+        {{"explanation": "패턴 설명", "examples": ["1. 영어 - 해석", "2. 영어 - 해석", "3. 영어 - 해석", "4. 영어 - 해석", "5. 영어 - 해석", "6. 영어 - 해석", "7. 영어 - 해석", "8. 영어 - 해석", "9. 영어 - 해석", "10. 영어 - 해석"]}}
         """
-        try:
-            # 🚀 초경량 모델 적용
-            response = self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
-            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-            if match: return json.loads(match.group(0))
-            return {"explanation": "형식 이탈", "examples": []}
-        except Exception as e: 
-            return {"explanation": f"🚨 통신 에러: {str(e)}", "examples": []}
+        raw_text = self._call_ai(prompt)
+        if "🚨" in raw_text: return {"explanation": raw_text, "examples": []}
+        
+        clean_text = raw_text.replace("```json", "").replace("```", "").strip()
+        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+        return json.loads(match.group(0)) if match else {"explanation": "파싱 실패", "examples": []}
 
     def extract_text(self, uploaded_file):
         text = ""
@@ -212,7 +216,7 @@ def get_unique_150_patterns():
     return [f"Day {i+1:03d} : {p}" for i, p in enumerate(patterns)]
 
 # ============================================================
-# [4] 세션 초기화 및 UI 메인
+# [4] UI 메인 구성
 # ============================================================
 if 'study_log' not in st.session_state: st.session_state.study_log = []
 if 'all_sentences' not in st.session_state: st.session_state.all_sentences = []
@@ -220,13 +224,17 @@ if 'current_text' not in st.session_state: st.session_state.current_text = ""
 if 'current_page' not in st.session_state: st.session_state.current_page = 0
 if 'page_translations' not in st.session_state: st.session_state.page_translations = {}
 
-tutor = EnglishTutorEngine()
-
-# 🗂️ 사이드바: 나만의 서재
+# 🗂️ 사이드바: 엔진 선택 및 서재
 with st.sidebar:
-    st.header("📚 나만의 서재")
-    st.write("저장된 문서를 불러오세요.")
+    st.header("⚙️ AI 엔진 선택")
+    st.write("메인 엔진이 막히면 초고속 모델로 교체하세요!")
+    selected_engine = st.radio(
+        "사용할 무료 AI 모델:", 
+        ["Gemini 2.5 (구글/무료)", "Llama 3 (메타/초고속 무료)"]
+    )
     
+    st.divider()
+    st.header("📚 나만의 서재")
     library = load_library()
     if library:
         saved_titles = list(library.keys())
@@ -236,7 +244,7 @@ with st.sidebar:
         with col_load:
             if st.button("📂 불러오기", use_container_width=True) and selected_doc != "선택하세요":
                 st.session_state.current_text = library[selected_doc]['text']
-                st.session_state.all_sentences = tutor.split_into_sentences(st.session_state.current_text)
+                st.session_state.all_sentences = MultiAIEngine(selected_engine).split_into_sentences(st.session_state.current_text)
                 st.session_state.current_page = 0
                 st.session_state.page_translations = {}
                 st.rerun()
@@ -248,7 +256,11 @@ with st.sidebar:
     else:
         st.info("아직 저장된 문서가 없습니다.")
 
-st.title("🎓 AI 영어 전문가 마스터 시스템")
+# 엔진 동적 생성
+tutor = MultiAIEngine(selected_engine)
+
+st.title(f"🎓 AI 영어 마스터")
+st.caption(f"🚀 현재 작동 중인 엔진: **{selected_engine}**")
 
 tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
@@ -278,10 +290,10 @@ with tabs[0]:
                 if st.button("저장 확정"):
                     if doc_title:
                         save_to_library(doc_title, temp_text)
-                        st.success("사이드바의 서재에 저장되었습니다!")
+                        st.success("저장 완료!")
                         st.rerun()
                     else:
-                        st.error("제목을 입력해야 합니다.")
+                        st.error("제목을 입력하세요.")
 
     st.divider()
 
@@ -294,7 +306,7 @@ with tabs[0]:
         current_chunk = st.session_state.all_sentences[start_idx:end_idx]
 
         if current_page not in st.session_state.page_translations:
-            with st.spinner("AI가 1:1 직독직해 중입니다..."):
+            with st.spinner(f"번역 중입니다..."):
                 st.session_state.page_translations[current_page] = tutor.bulk_translate(current_chunk)
         
         translations = st.session_state.page_translations[current_page]
@@ -339,7 +351,7 @@ with tabs[0]:
             st.markdown(f"### 🕵️‍♂️ 심층 리포트")
             st.info(f"**📖 원문:** {target_s}\n\n**💡 해석:** {translations[selected_rows[0]]}")
             
-            with st.spinner("초고속 분석 중..."):
+            with st.spinner(f"초고속 분석 중..."):
                 analysis = tutor.deep_analyze(target_s)
                 c1, c2, c3 = st.columns(3)
                 c1.success(f"📐 **문법 & 형식**\n\n{dict_to_text(analysis.get('grammar'))}")
@@ -354,7 +366,7 @@ with tabs[1]:
         selected_p = st.radio("패턴 리스트", all_patterns, label_visibility="collapsed")
     
     if st.button("이 패턴 집중 공략하기 🚀"):
-        with st.spinner("AI가 10개의 맞춤 예문을 생성 중입니다..."):
+        with st.spinner(f"맞춤 예문을 생성 중입니다..."):
             p_data = tutor.get_pattern_study(selected_p)
             st.session_state.p_study = p_data
             st.session_state.p_title = selected_p
@@ -371,7 +383,7 @@ with tabs[1]:
             st.balloons()
             if st.button("학습 달력에 도장 찍기"):
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "패턴 집중 학습", "내용": st.session_state.p_title})
-                st.success("달력에 저장되었습니다!")
+                st.success("저장되었습니다!")
 
 with tabs[2]:
     st.subheader("📅 나의 학습 히스토리")
