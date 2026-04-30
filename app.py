@@ -252,7 +252,8 @@ with st.sidebar:
     st.header("📚 나만의 서재")
     library = load_library()
     if library:
-        saved_titles = list(library.keys())
+        # 🚨 [수정 3] 서재의 문서 목록을 무조건 가나다/ABC 순으로 정렬합니다!
+        saved_titles = sorted(list(library.keys()))
         selected_doc = st.selectbox("저장된 문서 목록", ["선택하세요"] + saved_titles)
         
         col_load, col_del = st.columns(2)
@@ -333,20 +334,37 @@ with tabs[0]:
             "English (원문)": current_chunk,
             "Korean (직관적 해석)": translations[:len(current_chunk)]
         })
+        # 🚨 [수정 1] "No." 컬럼을 인덱스로 만들어서 여백 없이 가장 초슬림하게 핏(Fit) 되도록 설정
+        df.set_index("No.", inplace=True)
         
         st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 분석이 나옵니다)")
         
-        # 🚨 [수정 내용] 번호 칸 너비를 40픽셀로 아주 얇게 강제 고정했습니다!
-        selection = st.dataframe(
-            df, 
-            hide_index=True,
-            column_config={
-                "No.": st.column_config.NumberColumn("No.", width=40),
-                "English (원문)": st.column_config.TextColumn(width="large"),
-                "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
-            },
-            width="stretch", on_select="rerun", selection_mode="single-row"
-        )
+        df_config = {
+            "English (원문)": st.column_config.TextColumn(width="large"),
+            "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
+        }
+
+        # 🚨 [수정 2] 긴 문장이 아래로 자연스럽게 줄바꿈(Wrap) 되도록 row_height 옵션을 추가했습니다.
+        try:
+            selection = st.dataframe(
+                df, 
+                hide_index=False, # 인덱스를 살려서 초슬림 번호칸을 렌더링
+                column_config=df_config,
+                use_container_width=True,
+                row_height=90, # 행 높이를 늘려 글씨가 여러 줄로 줄바꿈되도록 공간 확보
+                on_select="rerun", 
+                selection_mode="single-row"
+            )
+        except TypeError:
+            # 아주 약간 구버전 환경일 경우를 대비한 안전 장치
+            selection = st.dataframe(
+                df, 
+                hide_index=False,
+                column_config=df_config,
+                use_container_width=True,
+                on_select="rerun", 
+                selection_mode="single-row"
+            )
 
         col_prev, col_info, col_next = st.columns([1, 2, 1])
         with col_prev:
