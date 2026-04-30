@@ -9,8 +9,6 @@ import io
 import pandas as pd
 from datetime import datetime
 import math
-
-# 새롭게 추가된 초고속 무료 AI 라이브러리
 from groq import Groq
 
 # ============================================================
@@ -19,7 +17,7 @@ from groq import Groq
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
 # ============================================================
-# 🔐 보안 및 설정 (키가 없어도 에러 나지 않게 처리)
+# 🔐 보안 및 설정
 # ============================================================
 try:
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
@@ -71,14 +69,13 @@ def delete_from_library(title):
         with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ============================================================
-# [2] 하이브리드 멀티 AI 엔진 (Gemini vs Groq Llama 3.1)
+# [2] 하이브리드 멀티 AI 엔진 (디테일 분석 강화!)
 # ============================================================
 class MultiAIEngine:
     def __init__(self, selected_engine):
         self.engine_type = selected_engine
 
     def _call_ai(self, prompt):
-        """선택된 엔진에 맞춰 자동으로 API를 호출하는 마스터 스위치"""
         try:
             if self.engine_type == "Gemini 2.5 (구글/무료)":
                 if not GEMINI_API_KEY: return "🚨 Gemini API 키가 없습니다."
@@ -87,9 +84,8 @@ class MultiAIEngine:
                 return response.text
 
             elif self.engine_type == "Llama 3.1 (메타/초고속 무료)":
-                if not GROQ_API_KEY: return "🚨 Groq API 키가 없습니다. Secrets에 추가해주세요."
+                if not GROQ_API_KEY: return "🚨 Groq API 키가 없습니다."
                 client = Groq(api_key=GROQ_API_KEY)
-                # 🚀 지원 종료된 3.0 대신 최신형 Llama 3.1 엔진으로 교체 완료!
                 response = client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": prompt}],
@@ -100,7 +96,6 @@ class MultiAIEngine:
         except Exception as e:
             return f"🚨 {self.engine_type} 서버 에러: {str(e)}"
 
-    # --- 공통 기능 로직 ---
     def bulk_translate(self, sentences):
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
@@ -116,18 +111,35 @@ class MultiAIEngine:
             return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
         return ["파싱 실패 (AI 응답 오류)"] * len(sentences)
 
+    # 🚨 [핵심 변경] 프롬프트를 세분화하여 요청하신 4가지 조건(상세문법, 예시3개, 배경/단어/발음 분리, 자연스러운 해석) 완벽 적용
     def deep_analyze(self, text):
         prompt = f"""
-        아래 영어 문장을 분석하여 순수 JSON으로 응답하세요. 값은 반드시 단일 문자열(String)이어야 합니다.
-        {{"grammar": "문법 및 형식", "examples": "예시 2~3개와 해석", "background": "단어 뜻, 한글 발음"}}
+        당신은 대한민국 최고의 영어 일타 강사입니다. 아래 문장을 깊이 있게 분석하여 반드시 순수 JSON으로만 응답하세요. 마크다운 기호(```json)는 절대 쓰지 마세요.
+        {{
+            "grammar": "문장의 구조(1~5형식 중 무엇인지)와 핵심 문법 요소에 대한 아주 상세하고 친절한 설명 (줄바꿈 가능)",
+            "examples": [
+                "1. 예문 - 해석",
+                "2. 예문 - 해석",
+                "3. 예문 - 해석"
+            ],
+            "background": {{
+                "translation": "이 문장의 가장 자연스러운 우리말 해석 (의역 포함)",
+                "pronunciation": "원어민의 연음을 반영한 자연스러운 한글 발음 표기",
+                "words": "핵심 단어와 숙어 정리 (뜻 포함)",
+                "context": "이 문장이 쓰이는 문화적 배경이나 뉘앙스 설명"
+            }}
+        }}
         문장: "{text}"
         """
         raw_text = self._call_ai(prompt)
-        if "🚨" in raw_text: return {"grammar": "에러", "examples": "에러", "background": raw_text}
+        if "🚨" in raw_text: return {"grammar": "에러", "examples": ["에러"], "background": {}}
         
         clean_text = raw_text.replace("```json", "").replace("```", "").strip()
         match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-        return json.loads(match.group(0)) if match else {"grammar": "에러", "examples": "에러", "background": "파싱 실패"}
+        try:
+            return json.loads(match.group(0)) if match else {"grammar": "파싱 에러", "examples": [], "background": {}}
+        except:
+            return {"grammar": "JSON 디코딩 에러", "examples": [], "background": {}}
 
     def get_pattern_study(self, pattern_text):
         prompt = f"""
@@ -224,13 +236,13 @@ if 'current_text' not in st.session_state: st.session_state.current_text = ""
 if 'current_page' not in st.session_state: st.session_state.current_page = 0
 if 'page_translations' not in st.session_state: st.session_state.page_translations = {}
 
-# 🗂️ 사이드바: 엔진 선택 및 서재
+# 🗂️ 사이드바
 with st.sidebar:
     st.header("⚙️ AI 엔진 선택")
     st.write("메인 엔진이 막히면 초고속 모델로 교체하세요!")
     selected_engine = st.radio(
         "사용할 무료 AI 모델:", 
-        ["Llama 3.1 (메타/초고속 무료)", "Gemini 2.5 (구글/무료)"] # Llama를 기본값으로 위로 올렸습니다.
+        ["Llama 3.1 (메타/초고속 무료)", "Gemini 2.5 (구글/무료)"]
     )
     
     st.divider()
@@ -316,12 +328,14 @@ with tabs[0]:
             "English (원문)": current_chunk,
             "Korean (직관적 해석)": translations[:len(current_chunk)]
         })
-        df.set_index("No.", inplace=True)
-
+        
         st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 분석이 나옵니다)")
+        # 🚨 [핵심 수정] 인덱스를 숨기고 No 컬럼 너비를 최소화하여 깔끔한 넘버링 구현
         selection = st.dataframe(
             df, 
+            hide_index=True,
             column_config={
+                "No.": st.column_config.NumberColumn("No.", width="small"),
                 "English (원문)": st.column_config.TextColumn(width="large"),
                 "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
             },
@@ -340,23 +354,31 @@ with tabs[0]:
                 st.session_state.current_page += 1
                 st.rerun()
 
-        def dict_to_text(data):
-            if isinstance(data, dict): return "\n\n".join([f"- **{k}**: {v}" for k, v in data.items()])
-            return str(data).replace("\\n", "\n")
-
         selected_rows = selection.get("selection", {}).get("rows", [])
         if selected_rows:
             target_s = current_chunk[selected_rows[0]]
             st.divider()
-            st.markdown(f"### 🕵️‍♂️ 심층 리포트")
-            st.info(f"**📖 원문:** {target_s}\n\n**💡 해석:** {translations[selected_rows[0]]}")
+            st.markdown(f"### 🕵️‍♂️ {start_idx + selected_rows[0] + 1}번 문장 심층 리포트")
             
-            with st.spinner(f"초고속 분석 중..."):
+            with st.spinner(f"초고속 상세 분석 중..."):
                 analysis = tutor.deep_analyze(target_s)
+                
                 c1, c2, c3 = st.columns(3)
-                c1.success(f"📐 **문법 & 형식**\n\n{dict_to_text(analysis.get('grammar'))}")
-                c2.warning(f"💡 **응용 예시**\n\n{dict_to_text(analysis.get('examples'))}")
-                c3.error(f"🌍 **배경 & 발음 & 단어**\n\n{dict_to_text(analysis.get('background'))}")
+                
+                # 1. 문법 & 형식 (상세하게)
+                c1.success(f"📐 **문법 & 형식 상세 강의**\n\n{analysis.get('grammar', '정보 없음')}")
+                
+                # 2. 응용 예시 (3개 이상 강제)
+                examples_text = "\n\n".join([f"- {ex}" for ex in analysis.get('examples', [])])
+                c2.warning(f"💡 **응용 실전 예시**\n\n{examples_text}")
+                
+                # 3. 배경 & 발음 & 단어 (세분화 및 자연스러운 해석 추가)
+                bg = analysis.get('background', {})
+                bg_text = f"🎯 **자연스러운 해석:**\n{bg.get('translation', '정보 없음')}\n\n" \
+                          f"🗣️ **원어민 발음:**\n{bg.get('pronunciation', '정보 없음')}\n\n" \
+                          f"📝 **단어/숙어:**\n{bg.get('words', '정보 없음')}\n\n" \
+                          f"🌍 **배경/뉘앙스:**\n{bg.get('context', '정보 없음')}"
+                c3.error(f"🔍 **문장 심층 지식**\n\n{bg_text}")
 
 with tabs[1]:
     st.subheader("🚀 150 핵심 패턴 정복")
