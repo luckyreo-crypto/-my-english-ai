@@ -54,7 +54,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🌟 대소문자 유연 대응 시스템)
+# [1] 데이터 관리 엔진 (DB 연동)
 # ============================================================
 def get_gsheet():
     try:
@@ -89,15 +89,11 @@ def load_library():
         records = sheet.get_all_records()
         library = {}
         for row in records:
-            # 🚨 [수정 포인트] 시트의 헤더가 소문자(title)든 대문자(Title)든 상관없이 찾습니다.
-            # 모든 키를 소문자로 바꿔서 매칭되는 실제 키 이름을 알아냅니다.
             real_keys = {k.lower(): k for k in row.keys()}
-            
             t_key = real_keys.get('title')
             txt_key = real_keys.get('text')
             d_key = real_keys.get('date')
             
-            # 실제 데이터 추출
             title_val = row.get(t_key) if t_key else None
             text_val = row.get(txt_key, '') if txt_key else ''
             date_val = row.get(d_key, '') if d_key else ''
@@ -109,7 +105,6 @@ def load_library():
                 }
         return library
     except Exception as e:
-        # 만약 get_all_records에서 에러가 나면 데이터가 꼬인 것이므로 수동 파싱 시도
         all_vals = sheet.get_all_values()
         if len(all_vals) <= 1: return {}
         return {"에러 복구 중...": {"text": "시트 헤더를 Title, Text, Date로 맞춰주세요.", "date": ""}}
@@ -131,13 +126,11 @@ def save_to_library(title, text):
                 break
 
         if row_idx:
-            # 기존 행 업데이트 (열 번호는 1:Title, 2:Text, 3:Date 기준)
             sheet.update_cell(row_idx, 2, text)
             sheet.update_cell(row_idx, 3, date_str)
         else:
             sheet.append_row([title, text, date_str])
     except:
-        # 안전하게 새로 추가
         sheet.append_row([title, text, datetime.now().strftime("%Y-%m-%d %H:%M")])
 
 def delete_from_library(title):
@@ -215,19 +208,20 @@ class MultiAIEngine:
                 "pronunciation": "원어민의 연음을 반영한 자연스러운 한글 발음 표기",
                 "words": "핵심 단어와 숙어 정리 (뜻 포함)",
                 "context": "이 문장이 쓰이는 문화적 배경이나 뉘앙스 설명"
-            }}
+            }},
+            "hover_html": "입력된 영어 문장의 '모든 단어'를 하나씩 쪼개서, <span title='단어의 한글 뜻' style='cursor:help; border-bottom:1px dashed #ccc; color:#0056b3; font-weight:bold;'>단어</span> 형태로 감싸서 만든 전체 문장 HTML 문자열. (마우스를 올리면 뜻이 보이게 하는 용도)"
         }}
         문장: "{text}"
         """
         raw_text = self._call_ai(prompt)
-        if "🚨" in raw_text: return {"grammar": "에러", "examples": ["에러"], "background": {}}
+        if "🚨" in raw_text: return {"grammar": "에러", "examples": ["에러"], "background": {}, "hover_html": text}
         
         clean_text = raw_text.replace("```json", "").replace("```", "").strip()
         match = re.search(r'\{.*\}', clean_text, re.DOTALL)
         try:
-            return json.loads(match.group(0)) if match else {"grammar": "파싱 에러", "examples": [], "background": {}}
+            return json.loads(match.group(0)) if match else {"grammar": "파싱 에러", "examples": [], "background": {}, "hover_html": text}
         except:
-            return {"grammar": "JSON 디코딩 에러", "examples": [], "background": {}}
+            return {"grammar": "JSON 디코딩 에러", "examples": [], "background": {}, "hover_html": text}
 
     def get_pattern_study(self, pattern_text):
         prompt = f"""
@@ -299,7 +293,7 @@ def get_unique_150_patterns():
         "When do you ~? (너는 언제 ~해?)", "When did you ~? (너 언제 ~했어?)", "When is a good time to ~? (~하기 언제가 좋아?)", 
         "Where do you ~? (너는 어디서 ~해?)", "Where did you ~? (너 어디서 ~했어?)", "Where can I ~? (어디서 ~할 수 있을까요?)", 
         "Who is ~? (누가 ~야?)", "Who do you ~? (너는 누구를 ~해?)", "Who wants to ~? (누가 ~하고 싶어?)", 
-        "Is it okay if ~? (~해도 괜찮을까요?)", "Is there ~? (~가 있나요?)", "Is it possible to ~? (~하는 게 가능할까요?)", 
+        "Is it okay if ~? (~해도 괜찮까요?)", "Is there ~? (~가 있나요?)", "Is it possible to ~? (~하는 게 가능할까요?)", 
         "It is ~ (그건 ~야)", "It is time to ~ (~할 시간이야)", "It looks like ~ (~인 것 같아 보여)", 
         "It seems that ~ (~인 모양이야)", "It takes ~ (~가 필요해/걸려)", "It doesn't matter ~ (~는 상관없어)", 
         "It's hard to ~ (~하기가 힘들어)", "It's worth ~ing (~할 가치가 있어)", "There is ~ (~가 있어)", 
@@ -392,7 +386,15 @@ with tabs[0]:
         temp_text = st.text_area("영어 문장이나 대본을 붙여넣으세요", height=100)
 
     st.write("---")
-    split_mode = st.radio("✂️ 문장 나누기 기준", ["마침표 기준 (일반 문서, 소설 등)", "줄바꿈 기준 (대본, 자막 등)"], horizontal=True)
+    # 🚨 [수정됨] 사용자가 명확하게 이해할 수 있도록 라디오 버튼 설명 변경
+    split_mode = st.radio(
+        "✂️ 문장 나누기 기준 선택", 
+        [
+            "📝 마침표(.) 기준 (소설, 기사처럼 줄바꿈 없이 이어진 글에 적합)", 
+            "↵ 줄바꿈(Enter) 기준 (대본, 자막, 가사처럼 한 줄이 한 문장일 때 적합)"
+        ], 
+        horizontal=False
+    )
 
     if temp_text:
         col_apply, col_save, _ = st.columns([2, 2, 6])
@@ -447,13 +449,14 @@ with tabs[0]:
             "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
         }
 
+        # 🚨 [수정됨] 표 높이를 90에서 60으로 확 줄여서 컴팩트하게 만들었습니다!
         try:
             selection = st.dataframe(
                 df, 
                 hide_index=False,
                 column_config=df_config,
                 use_container_width=True,
-                row_height=90,
+                row_height=60, 
                 on_select="rerun", 
                 selection_mode="single-row"
             )
@@ -478,8 +481,13 @@ with tabs[0]:
             st.divider()
             st.markdown(f"### 🕵️‍♂️ {start_idx + selected_rows[0] + 1}번 문장 심층 리포트")
             
-            with st.spinner(f"초고속 상세 분석 중..."):
+            with st.spinner(f"초고속 상세 분석 및 단어 번역 생성 중..."):
                 analysis = tutor.deep_analyze(target_s)
+                
+                # 🚨 [새로운 기능] 마우스 호버 영단어 번역 기능 출력!
+                st.info("💡 **스마트 번역:** 아래 영단어 위에 마우스 커서를 올려보세요!")
+                hover_html = analysis.get('hover_html', target_s)
+                st.markdown(f"<div style='font-size: 1.2em; line-height: 1.8; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 10px;'>{hover_html}</div>", unsafe_allow_html=True)
                 
                 c1, c2, c3 = st.columns(3)
                 
