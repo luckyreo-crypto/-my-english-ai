@@ -58,6 +58,10 @@ def get_gsheet():
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets']
         creds_dict = json.loads(GCP_SA_JSON)
+        
+        # 🚨 [최종 해결책] 꼬여있는 줄바꿈 기호를 파이썬이 읽을 수 있게 강제로 펴줍니다!
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(GSHEET_URL).sheet1
