@@ -10,6 +10,7 @@ import pandas as pd
 from datetime import datetime
 import math
 from groq import Groq
+import textwrap
 
 # 구글 스프레드시트 DB용 라이브러리
 import gspread
@@ -51,49 +52,51 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🛡️ QA 진단 & 자동 복구 시스템 탑재)
+# [1] 데이터 관리 엔진 (🌟 절대 무적 DB 연결 시스템 🌟)
 # ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
     try:
+        # 1. 스트림릿 금고에서 텍스트를 꺼내옵니다.
+        raw_secret = GCP_SA_JSON
+        
+        # 🚨 [가장 중요한 핵심] 에러의 주범인 '유령 공백(NBSP)'을 일반 공백으로 강제 세탁합니다.
+        raw_secret = raw_secret.replace('\xa0', ' ')
+        
+        # 2. 깨끗해진 텍스트를 JSON으로 파싱합니다.
+        creds_dict = json.loads(raw_secret, strict=False)
+        
+        # 3. 열쇠 몸통(Private Key)만 꺼내서 완벽한 규격으로 강제 재조립합니다.
+        pk = creds_dict.get("private_key", "")
+        pk = pk.replace("\\n", "\n") # 백슬래시 n을 진짜 엔터로 치환
+        
+        if "BEGIN PRIVATE KEY" in pk:
+            # 머리와 꼬리를 자르고 순수 암호문만 빼냅니다.
+            header = "-----BEGIN PRIVATE KEY-----"
+            footer = "-----END PRIVATE KEY-----"
+            body = pk.split(header)[-1].split(footer)[0]
+            
+            # 암호문 안에 섞인 모든 쓰레기(띄어쓰기, 줄바꿈)를 완전 삭제합니다.
+            body = body.replace("\n", "").replace(" ", "").strip()
+            
+            # 깨끗해진 순수 암호문을 구글 표준 규격인 64글자씩 다시 예쁘게 포장합니다.
+            wrapped_body = "\n".join(textwrap.wrap(body, 64))
+            
+            # 머리와 꼬리를 다시 완벽하게 이어 붙입니다.
+            pk = f"{header}\n{wrapped_body}\n{footer}\n"
+            
+        # 완벽하게 복구된 열쇠를 다시 꽂아 넣습니다.
+        creds_dict["private_key"] = pk
+        
+        # 4. 구글 시트 연결 시도
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds_dict = json.loads(GCP_SA_JSON, strict=False)
-        private_key = creds_dict.get("private_key", "")
-        
-        # 🛡️ QA: 열쇠 강제 복구 및 진단 시스템
-        import textwrap
-        
-        match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', private_key, re.DOTALL)
-        if not match:
-            st.error("🚨 [QA 진단] 열쇠 훼손: 'BEGIN' 또는 'END' 태그를 찾을 수 없습니다. Secrets에 복사한 내용이 누락되었습니다.")
-            return None
-            
-        payload = match.group(1)
-        
-        # 1. 불순물 박멸 (A-Z, a-z, 0-9, +, /, = 만 남기고 에러를 낸 마침표 등 싹 제거)
-        payload_clean = re.sub(r'[^A-Za-z0-9+/=]', '', payload)
-        
-        # 2. 길이 검증 (구글 암호키는 일반적으로 Base64 인코딩 시 약 1600자 이상입니다)
-        if len(payload_clean) < 1000:
-            st.error(f"🚨 [QA 진단] Short Data 에러 원인 발견!: 열쇠를 복사할 때 뒷부분이 잘렸습니다! (현재 글자 수: {len(payload_clean)}자 / 정상 길이: 약 1600자 이상). 텍스트 전체(Ctrl+A)를 빠짐없이 다시 복사해주세요.")
-            return None
-            
-        # 3. 정규 규격으로 완벽 재포장
-        payload_wrapped = '\n'.join(textwrap.wrap(payload_clean, 64))
-        perfect_key = f"-----BEGIN PRIVATE KEY-----\n{payload_wrapped}\n-----END PRIVATE KEY-----\n"
-        creds_dict["private_key"] = perfect_key
-        
-        # 연결 시도
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(GSHEET_URL).sheet1
         return sheet
         
-    except json.JSONDecodeError as e:
-        st.error(f"🚨 [QA 진단] JSON 파싱 에러: Secrets에 붙여넣은 텍스트가 깨져있습니다. 따옴표나 괄호가 누락되었습니다. 상세: {e}")
-        return None
     except Exception as e:
-        st.error(f"🚨 DB 연결 에러: {e}")
+        st.error(f"🚨 DB 연결 에러 상세: {e}")
         return None
 
 def load_library():
