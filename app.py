@@ -11,10 +11,10 @@ from datetime import datetime
 import math
 from groq import Groq
 import textwrap
+import traceback
+import time  # 🚨 [추가됨] 사람의 눈을 위해 1.5초를 기다려줄 시간 부품
 
-# 🚨 에러 정밀 추적을 위한 부품
-import traceback 
-
+# 구글 스프레드시트 DB용 라이브러리
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -54,47 +54,31 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🌟 에러 정밀 추적 시스템 탑재)
+# [1] 데이터 관리 엔진 (DB 연동 완벽 작동 중!)
 # ============================================================
 def get_gsheet():
-    """구글 시트와 연결하는 마스터 함수"""
     try:
-        # 1. 시크릿에서 가져온 JSON 파싱
         if isinstance(GCP_SA_JSON, str):
             raw_secret = GCP_SA_JSON.strip().replace('\xa0', ' ').replace('\u200b', ' ')
             creds_dict = json.loads(raw_secret, strict=False)
         else:
             creds_dict = dict(GCP_SA_JSON)
         
-        # 2. 열쇠 줄바꿈 오류 방지
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
-        # 3. 인증 권한 부여
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         
-        # 4. 시트 연결 시도
-        # URL에 붙은 불필요한 파라미터(?gid=...)를 잘라내고 순수 주소만 사용합니다.
         clean_url = GSHEET_URL.split('?')[0] 
         sheet = client.open_by_url(clean_url).sheet1
         return sheet
 
     except Exception as e:
-        # 🚨 [중요] 뭉뚱그려진 에러(e)가 아니라, 시스템의 '진짜' 상세 에러 로그를 긁어옵니다.
         error_details = traceback.format_exc()
-        
-        st.error("🚨 **[DB 연결 실패] 원인 정밀 분석 보고서** 🚨")
-        
-        if "SpreadsheetNotFound" in error_details or "APIError" in error_details:
-            st.error("👉 **진단 결과: 시트 접근 권한이 없습니다!**\n구글 시트에 들어가셔서 `reoenglish@reo-english-project.iam.gserviceaccount.com` 주소를 [편집자]로 공유해주셨는지 다시 한번 확인해주세요.")
-        elif "JSONDecodeError" in error_details:
-            st.error("👉 **진단 결과: Secrets의 JSON 텍스트 형식이 깨졌습니다.**\n괄호나 따옴표가 빠진 곳이 없는지 확인해주세요.")
-        else:
-            st.error("👉 **진단 결과: 알 수 없는 시스템 오류입니다. 아래 로그를 복사해서 알려주세요.**")
-            
-        st.code(error_details, language="bash") # 검은색 박스에 상세 에러 출력
+        st.error("🚨 **[DB 연결 실패]** 🚨")
+        st.code(error_details, language="bash")
         return None
 
 def load_library():
@@ -324,7 +308,15 @@ with st.sidebar:
     )
     
     st.divider()
-    st.header("📚 나만의 서재 (DB)")
+    
+    # 🚨 [추가됨] 언제든 최신 서재 목록을 땡겨올 수 있는 새로고침 버튼 추가
+    col_db1, col_db2 = st.columns([3, 1])
+    with col_db1:
+        st.header("📚 나만의 서재 (DB)")
+    with col_db2:
+        if st.button("🔄"):
+            st.rerun()
+
     with st.spinner("구글 시트에서 서재를 불러오는 중..."):
         library = load_library()
         
@@ -343,7 +335,8 @@ with st.sidebar:
         with col_del:
             if st.button("🗑️ 삭제", use_container_width=True) and selected_doc != "선택하세요":
                 delete_from_library(selected_doc)
-                st.success("삭제되었습니다.")
+                st.success("삭제되었습니다!")
+                time.sleep(1) # 지운 후 1초 대기
                 st.rerun()
     else:
         st.info("아직 저장된 문서가 없습니다.")
@@ -385,7 +378,10 @@ with tabs[0]:
                     if doc_title:
                         with st.spinner("클라우드에 안전하게 저장 중..."):
                             save_to_library(doc_title, temp_text)
-                        st.success("저장 완료!")
+                        
+                        # 🚨 [추가됨] 화면에 저장 성공 알림을 띄우고 사람이 읽을 수 있게 1.5초 기다려줍니다!
+                        st.success(f"🎉 '{doc_title}' 문서가 안전하게 저장되었습니다!")
+                        time.sleep(1.5)
                         st.rerun()
                     else:
                         st.error("제목을 입력하세요.")
