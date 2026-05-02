@@ -21,16 +21,18 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
 # ============================================================
-# 🔐 보안 및 설정
+# 🔐 보안 및 설정 (Streamlit Native 방식 지원)
 # ============================================================
 try:
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
     GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
     GSHEET_URL = st.secrets["GSHEET_URL"]
-    GCP_SA_JSON = st.secrets["GCP_SA_JSON"]
+    
+    # JSON 스트링이 아닌 딕셔너리로 바로 받아옵니다! (가장 안전한 방식)
+    GCP_CREDS = st.secrets["GCP_SA_JSON"]
 except Exception as e:
-    st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다. Streamlit 대시보드 설정을 확인해주세요.")
+    st.error(f"🚨 보안 설정(Secrets)이 완료되지 않았습니다. 상세: {e}")
     st.stop()
 
 # ============================================================
@@ -51,42 +53,43 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🛡️ QA 검증: 무결점 DB 연결 로직)
+# [1] 데이터 관리 엔진 (🛡️ 에러 원천 차단 로직)
 # ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
     try:
-        # 1. 텍스트 앞뒤의 불필요한 공백과 유령 공백(\xa0)만 가볍게 제거합니다.
-        raw_secret = str(GCP_SA_JSON).strip().replace('\xa0', ' ').replace('\u200b', ' ')
-        creds_dict = json.loads(raw_secret, strict=False)
+        # 1. Streamlit Secrets에서 가져온 데이터를 딕셔너리로 변환
+        if isinstance(GCP_CREDS, str):
+            # 혹시나 예전 문자열 방식을 쓰는 경우를 대비한 방어 코드
+            raw_secret = GCP_CREDS.strip().replace('\xa0', ' ').replace('\u200b', ' ')
+            creds_dict = json.loads(raw_secret, strict=False)
+        else:
+            # 🌟 [새로운 정석 방식] TOML 테이블에서 바로 읽어오기 (오류 0%)
+            creds_dict = dict(GCP_CREDS)
         
-        # 2. [가장 중요] 암호 본문은 절대 건드리지 않고, 텍스트 상의 백슬래시 n('\\n')만 진짜 엔터('\n')로 치환합니다.
+        # 2. 열쇠의 줄바꿈 강제 정상화 (스트림릿 버그 방어)
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        
-        # 3. 구글 권한 인증 및 시트 연결
+            
+        # 3. 인증 및 연결
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         
-        # 4. 시트 반환
         sheet = client.open_by_url(GSHEET_URL).sheet1
         return sheet
         
-    except json.JSONDecodeError as e:
-        st.error(f"🚨 DB 설정 에러: Secrets에 붙여넣은 JSON 코드가 깨져있습니다. 따옴표나 괄호가 빠지지 않았나 확인해주세요. ({e})")
-        return None
     except gspread.exceptions.APIError as e:
-        st.error("🚨 DB 권한 에러: 구글 시트 우측 상단 [공유]에서 로봇 이메일을 '편집자'로 꼭 추가해주세요!")
+        st.error(f"🚨 권한 차단됨: 구글 시트 [공유] 버튼을 누르고 '{creds_dict.get('client_email')}' 주소를 '편집자'로 꼭 추가해주세요!")
         return None
     except Exception as e:
-        st.error(f"🚨 DB 연결 에러 상세: {e}")
+        # 에러가 나면 어떤 에러인지 정확하게 화면에 빨간색으로 출력합니다.
+        st.error(f"🚨 DB 연결 에러 상세: {str(e)}")
         return None
 
 def load_library():
     sheet = get_gsheet()
     if not sheet: return {}
-    
     try:
         records = sheet.get_all_records()
         library = {}
@@ -104,7 +107,6 @@ def load_library():
 def save_to_library(title, text):
     sheet = get_gsheet()
     if not sheet: return
-    
     try:
         records = sheet.get_all_records()
         date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -112,7 +114,7 @@ def save_to_library(title, text):
         row_idx = None
         for i, row in enumerate(records):
             if str(row.get('Title')) == str(title):
-                row_idx = i + 2 # 헤더가 1번 행이므로 +2
+                row_idx = i + 2 
                 break
 
         if row_idx:
@@ -126,7 +128,6 @@ def save_to_library(title, text):
 def delete_from_library(title):
     sheet = get_gsheet()
     if not sheet: return
-    
     try:
         records = sheet.get_all_records()
         for i, row in enumerate(records):
