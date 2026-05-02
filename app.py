@@ -87,7 +87,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (DB 연동 완벽 캐싱)
+# [1] 데이터 관리 엔진
 # ============================================================
 def get_gsheet():
     try:
@@ -220,10 +220,15 @@ class MultiAIEngine:
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
         
-        # 🚨 [개선 1 & 4] 직독직해 제거, 줄 꼬임 완벽 방지, 자연스러운 해석만 요구
+        # 🚨 [혁신 패치 1] 줄 어긋남 방지를 위해 강력한 1:1 매칭 지시
         prompt = f"""
-        당신은 넷플릭스 전문 번역가입니다. 제공된 텍스트를 가장 자연스러운 한국어 구어체로 번역하세요.
+        당신은 넷플릭스 전문 번역가입니다. 제공된 텍스트는 미국 드라마 대본입니다.
+        가장 자연스러운 한국어 구어체로 번역하세요.
         반드시 "JSON object" 형식으로만 응답하세요.
+        
+        [절대 규칙 - 줄 밀림 방지]
+        입력된 문장이 총 {len(sentences)}개입니다. 
+        반드시 "0"번부터 "{len(sentences)-1}"번까지의 키(Key)를 하나도 빠짐없이 만들고 번역을 채워넣으세요.
         
         출력 형식 예시:
         {{
@@ -240,21 +245,19 @@ class MultiAIEngine:
         result_data = extract_safe_json(raw_text)
         final_res = []
         
-        # 🚨 [줄 밀림 원천 차단] 무조건 원문 개수와 똑같이 리스트를 1:1 매칭 조립
+        # 🚨 [혁신 패치 2] 당겨오기 오지랖 완전 삭제. 오직 '정확한 번호'에만 꽂아 넣음.
         for i in range(len(sentences)):
-            val = "번역 누락"
             if result_data and isinstance(result_data, dict):
-                val = result_data.get(str(i))
-                # AI가 번호를 못 맞췄을 경우 값만 순서대로 빼오기
-                if not val and i < len(list(result_data.values())):
-                    val = list(result_data.values())[i]
-            
-            # 혹시 AI가 기존 포맷(dict)으로 뱉었을 경우를 위한 방어
-            if isinstance(val, dict):
-                val = val.get("natural", val.get("literal", str(val)))
-            
-            final_res.append(str(val))
-            
+                # 정확히 해당 인덱스 번호가 없으면 무조건 '번역 대기(AI 누락)'으로 처리하여 줄 밀림 완벽 방지
+                val = result_data.get(str(i), "번역 대기 (AI 누락)")
+                
+                if isinstance(val, dict):
+                    val = val.get("natural", val.get("literal", str(val)))
+                
+                final_res.append(str(val).replace("\n", " ").strip())
+            else:
+                final_res.append("파싱 대기 중")
+                
         return final_res
 
     def deep_analyze(self, text):
@@ -301,11 +304,12 @@ class MultiAIEngine:
         return text
 
     def split_into_sentences(self, text, split_mode="마침표"):
-        # 🚨 [개선 5] 대본 분리 기능 초강화 (단어단어 쪼개짐 박멸)
-        if "줄바꿈" in split_mode:
-            lines = text.split('\n')
+        # 🚨 [혁신 패치 3] 단어 쪼개짐 박멸! 대본/자막 전용 스마트 병합기
+        if "대본" in split_mode or "자막" in split_mode:
             sentences = []
             current = ""
+            lines = text.split('\n')
+            
             for line in lines:
                 line = line.strip()
                 if not line:
@@ -314,19 +318,28 @@ class MultiAIEngine:
                         current = ""
                     continue
                 
-                # 기존 텍스트에 이어 붙이기
-                if current: current += " " + line
-                else: current = line
+                # 대본 화자 인식 (예: "ROSS:", "Mr. Heckles:")
+                is_speaker = bool(re.match(r'^[A-Z][a-zA-Z\s\.]+:', line))
                 
-                # 문장이 온전히 끝나는 기호면 하나의 덩어리로 확정 짓기
-                if current.endswith(('.', '?', '!', '"', '”', '’')):
+                if is_speaker:
+                    if current:
+                        sentences.append(current)
+                    current = line
+                else:
+                    if current:
+                        current += " " + line
+                    else:
+                        current = line
+                
+                # 마침표/물음표 등으로 온전히 끝났고, 길이가 어느정도 되면 묶어서 배출 (단어 쪼개짐 방지)
+                if current.endswith(('.', '?', '!', '"', '”', '’')) and not is_speaker and len(current) > 10:
                     sentences.append(current)
                     current = ""
                     
-            if current: sentences.append(current)
-            
-            # 너무 짧은 1단어짜리 쓰레기 텍스트 제거
-            return [s.strip() for s in sentences if len(s.split()) >= 2]
+            if current:
+                sentences.append(current)
+                
+            return [s.strip() for s in sentences if len(s.strip()) > 2]
         else:
             sentences = re.split(r'(?<=[.!?])\s+', text.strip().replace('\n', ' '))
             return [s.strip() for s in sentences if len(s.strip()) > 5]
@@ -437,7 +450,7 @@ with st.sidebar:
 tutor = MultiAIEngine(selected_engine)
 
 st.title(f"🎓 AI 영어 마스터")
-st.caption(f"🚀 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **캐시 최적화 연동 완료**")
+st.caption(f"🚀 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **연결 완료**")
 
 tabs = st.tabs(["🔍 스마트 대본 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
@@ -451,8 +464,8 @@ with tabs[0]:
         else:
             temp_text = st.text_area("영어 대본이나 회화 문장을 붙여넣으세요", height=100)
 
-        # 🚨 [개선 5] 대본 기준 묶기 설명 보강
-        split_mode = st.radio("✂️ 문장 나누기 기준 선택", ["📝 마침표(.) 기준", "↵ 대본/자막 기준 (의미 단위로 똑똑하게 묶기)"], horizontal=False)
+        # 🚨 [혁신 패치 4] 대본/자막 기준 명확화
+        split_mode = st.radio("✂️ 문장 나누기 기준 선택", ["📝 마침표(.) 기준", "↵ 대본/자막 기준 (의미 단위로 묶기)"], horizontal=False)
 
         col_apply, col_save, _ = st.columns([2, 2, 6])
         with col_apply:
@@ -497,11 +510,11 @@ with tabs[0]:
         translations = st.session_state.page_translations["data"]
         clean_chunk = [str(s).replace("\n", " ").strip() for s in current_chunk]
         
-        # 🚨 [개선 1] 직독직해 열을 빼고 원문-자연스러운해석 2열로 깔끔하게 구성
+        # 🚨 [혁신 패치 5] 직독직해 열을 빼고 원문-자연스러운해석 2열로 깔끔하게 구성
         df = pd.DataFrame({
             "No.": range(start_idx + 1, end_idx + 1),
             "English (원문)": clean_chunk,
-            "Korean (자연스러운 해석)": [t.replace("\n", " ").strip() for t in translations]
+            "Korean (자연스러운 해석)": translations[:len(clean_chunk)]
         })
         df.set_index("No.", inplace=True)
         
@@ -513,7 +526,7 @@ with tabs[0]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "대본 분석 완료", "내용": f"{start_idx+1}~{end_idx}번 문장"})
                 st.toast("출석 도장이 찍혔습니다!", icon="📅")
         
-        # 🚨 [개선 2, 3] 자동 높이 제거 & 슬라이더만 단독 배치 (기본값 30)
+        # 🚨 [혁신 패치 6] 자동 높이 제거 & 슬라이더 단독 배치 (기본값 30 적용)
         row_h = st.slider("↕️ 리스트 줄 간격 수동 조절", min_value=30, max_value=200, value=30, step=5)
         
         df_config = {
@@ -591,6 +604,7 @@ with tabs[0]:
                     c1, c2, c3 = st.columns(3)
                     c1.success(f"📐 **문법 & 형식 핵심 강의**\n\n{grammar_str}")
                     c2.warning(f"💡 **응용 실전 예시**\n\n{examples_text}")
+                    # 직독직해는 표에서는 뺐지만, 상세 리포트에는 유지!
                     bg_text = f"🎯 **한국어 어순 직독직해:**\n{lit_trans}\n\n" \
                               f"🎯 **자연스러운 의역:**\n{nat_trans}\n\n" \
                               f"🗣️ **원어민 실제 발음:**\n{pronun_str}\n\n" \
