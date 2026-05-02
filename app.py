@@ -10,7 +10,6 @@ import pandas as pd
 from datetime import datetime
 import math
 from groq import Groq
-import textwrap
 
 # 구글 스프레드시트 DB용 라이브러리
 import gspread
@@ -30,8 +29,8 @@ try:
     GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
     GSHEET_URL = st.secrets["GSHEET_URL"]
     GCP_SA_JSON = st.secrets["GCP_SA_JSON"]
-except:
-    st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다.")
+except Exception as e:
+    st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다. Streamlit 대시보드 설정을 확인해주세요.")
     st.stop()
 
 # ============================================================
@@ -52,41 +51,33 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🌟 절대 무적 DB 연결 시스템 🌟)
-# ============================================================
-# ============================================================
-# [1] 데이터 관리 엔진 (🌟 정확한 에러 진단 기능 추가)
+# [1] 데이터 관리 엔진 (🛡️ QA 검증: 무결점 DB 연결 로직)
 # ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
     try:
-        raw_secret = GCP_SA_JSON.replace('\xa0', ' ').replace('\u200b', ' ')
+        # 1. 텍스트 앞뒤의 불필요한 공백과 유령 공백(\xa0)만 가볍게 제거합니다.
+        raw_secret = str(GCP_SA_JSON).strip().replace('\xa0', ' ').replace('\u200b', ' ')
         creds_dict = json.loads(raw_secret, strict=False)
         
-        # 열쇠 찌그러짐 방지 로직
-        pk = creds_dict.get("private_key", "").replace("\\n", "\n")
-        if "BEGIN PRIVATE KEY" in pk:
-            header = "-----BEGIN PRIVATE KEY-----"
-            footer = "-----END PRIVATE KEY-----"
-            body = pk.split(header)[-1].split(footer)[0]
-            body = re.sub(r'[^A-Za-z0-9+/=]', '', body) 
-            wrapped_body = "\n".join(textwrap.wrap(body, 64))
-            pk = f"{header}\n{wrapped_body}\n{footer}\n"
-        creds_dict["private_key"] = pk
+        # 2. [가장 중요] 암호 본문은 절대 건드리지 않고, 텍스트 상의 백슬래시 n('\\n')만 진짜 엔터('\n')로 치환합니다.
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
+        # 3. 구글 권한 인증 및 시트 연결
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         
-        # 🚨 여기서 에러가 나면 권한(공유) 문제이거나 주소가 틀린 것입니다!
+        # 4. 시트 반환
         sheet = client.open_by_url(GSHEET_URL).sheet1
         return sheet
         
     except json.JSONDecodeError as e:
-        st.error(f"🚨 JSON 파싱 에러: 복사하신 텍스트에 오타나 누락이 있습니다. 상세: {e}")
+        st.error(f"🚨 DB 설정 에러: Secrets에 붙여넣은 JSON 코드가 깨져있습니다. 따옴표나 괄호가 빠지지 않았나 확인해주세요. ({e})")
         return None
     except gspread.exceptions.APIError as e:
-        st.error(f"🚨 권한 차단됨: 구글 시트 우측 상단 [공유] 버튼을 누르고 '{creds_dict.get('client_email')}' 주소를 '편집자'로 꼭 추가해주세요!")
+        st.error("🚨 DB 권한 에러: 구글 시트 우측 상단 [공유]에서 로봇 이메일을 '편집자'로 꼭 추가해주세요!")
         return None
     except Exception as e:
         st.error(f"🚨 DB 연결 에러 상세: {e}")
@@ -95,42 +86,55 @@ def get_gsheet():
 def load_library():
     sheet = get_gsheet()
     if not sheet: return {}
-    records = sheet.get_all_records()
-    library = {}
-    for row in records:
-        if row.get('Title'):
-            library[str(row['Title'])] = {
-                "text": str(row.get('Text', '')), 
-                "date": str(row.get('Date', ''))
-            }
-    return library
+    
+    try:
+        records = sheet.get_all_records()
+        library = {}
+        for row in records:
+            if row.get('Title'):
+                library[str(row['Title'])] = {
+                    "text": str(row.get('Text', '')), 
+                    "date": str(row.get('Date', ''))
+                }
+        return library
+    except Exception as e:
+        st.error(f"🚨 데이터 불러오기 에러: {e}")
+        return {}
 
 def save_to_library(title, text):
     sheet = get_gsheet()
     if not sheet: return
-    records = sheet.get_all_records()
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    try:
+        records = sheet.get_all_records()
+        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    row_idx = None
-    for i, row in enumerate(records):
-        if str(row.get('Title')) == str(title):
-            row_idx = i + 2 
-            break
+        row_idx = None
+        for i, row in enumerate(records):
+            if str(row.get('Title')) == str(title):
+                row_idx = i + 2 # 헤더가 1번 행이므로 +2
+                break
 
-    if row_idx:
-        sheet.update_cell(row_idx, 2, text)
-        sheet.update_cell(row_idx, 3, date_str)
-    else:
-        sheet.append_row([title, text, date_str])
+        if row_idx:
+            sheet.update_cell(row_idx, 2, text)
+            sheet.update_cell(row_idx, 3, date_str)
+        else:
+            sheet.append_row([title, text, date_str])
+    except Exception as e:
+        st.error(f"🚨 데이터 저장 에러: {e}")
 
 def delete_from_library(title):
     sheet = get_gsheet()
     if not sheet: return
-    records = sheet.get_all_records()
-    for i, row in enumerate(records):
-        if str(row.get('Title')) == str(title):
-            sheet.delete_rows(i + 2)
-            break
+    
+    try:
+        records = sheet.get_all_records()
+        for i, row in enumerate(records):
+            if str(row.get('Title')) == str(title):
+                sheet.delete_rows(i + 2)
+                break
+    except Exception as e:
+        st.error(f"🚨 데이터 삭제 에러: {e}")
 
 # ============================================================
 # [2] 하이브리드 멀티 AI 엔진
@@ -171,8 +175,11 @@ class MultiAIEngine:
         clean_text = raw_text.replace("```json", "").replace("```", "").strip()
         match = re.search(r'\{.*\}', clean_text, re.DOTALL)
         if match: 
-            result_dict = json.loads(match.group(0))
-            return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
+            try:
+                result_dict = json.loads(match.group(0))
+                return [result_dict.get(str(i), "번역 누락") for i in range(len(sentences))]
+            except:
+                pass
         return ["파싱 실패 (AI 응답 오류)"] * len(sentences)
 
     def deep_analyze(self, text):
@@ -214,7 +221,10 @@ class MultiAIEngine:
         
         clean_text = raw_text.replace("```json", "").replace("```", "").strip()
         match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-        return json.loads(match.group(0)) if match else {"explanation": "파싱 실패", "examples": []}
+        try:
+            return json.loads(match.group(0)) if match else {"explanation": "파싱 실패", "examples": []}
+        except:
+            return {"explanation": "JSON 디코딩 에러", "examples": []}
 
     def extract_text(self, uploaded_file):
         text = ""
