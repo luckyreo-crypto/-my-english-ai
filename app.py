@@ -10,7 +10,6 @@ import pandas as pd
 from datetime import datetime
 import math
 from groq import Groq
-import textwrap
 
 # 구글 스프레드시트 DB용 라이브러리
 import gspread
@@ -52,32 +51,19 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🌟 궁극의 열쇠 정화 시스템 탑재 🌟)
+# [1] 데이터 관리 엔진 (🌟 정석 DB 연결 코드 🌟)
 # ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        # JSON 파일을 읽어옵니다.
         creds_dict = json.loads(GCP_SA_JSON, strict=False)
         
-        # 1. 꼬여있는 암호키 원본을 가져옵니다.
-        raw_key = creds_dict.get("private_key", "")
-        
-        # 2. 위아래 머리(Header)와 꼬리(Footer) 껍데기를 잠시 떼어냅니다.
-        key_body = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
-        
-        # 3. 🚨 [절대 무적의 불순물 제거기] 정규식을 사용해 오직 'Base64 암호 규격(A-Z, a-z, 0-9, +, /, =)'만 남기고,
-        # 에러를 일으킨 마침표(.), 띄어쓰기, 줄바꿈 기호 등 모든 쓰레기 데이터를 가차 없이 삭제합니다!
-        clean_body = re.sub(r'[^A-Za-z0-9+/=]', '', key_body)
-        
-        # 4. 불순물이 100% 제거된 깨끗한 암호문을 다시 64글자씩 예쁘게 포장합니다.
-        formatted_body = "\n".join(textwrap.wrap(clean_body, 64))
-        
-        # 5. 머리와 꼬리를 정상적인 줄바꿈과 함께 다시 붙여 완벽한 열쇠로 부활시킵니다.
-        perfect_key = f"-----BEGIN PRIVATE KEY-----\n{formatted_body}\n-----END PRIVATE KEY-----\n"
-        
-        creds_dict["private_key"] = perfect_key
-        
+        # 🚨 [정석 해결책] 암호는 절대 건드리지 않고, 스트림릿이 오해하는 줄바꿈 문자(\n)만 실제 엔터로 바꿔줍니다!
+        if "\\n" in creds_dict["private_key"]:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(GSHEET_URL).sheet1
