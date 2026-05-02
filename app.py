@@ -87,7 +87,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진
+# [1] 데이터 관리 엔진 (DB 연동 완벽 캐싱)
 # ============================================================
 def get_gsheet():
     try:
@@ -205,7 +205,7 @@ class MultiAIEngine:
                 kwargs = {
                     "model": "llama-3.1-8b-instant",
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
+                    "temperature": 0.2, # 온도를 더 낮춰서 AI가 창의성 부리며 빼먹는 현상 방지
                     "max_tokens": 4000
                 }
                 if expect_json:
@@ -220,19 +220,22 @@ class MultiAIEngine:
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
         
+        # 🚨 [혁신 패치 2] 번역 누락을 막기 위한 AI 멱살잡이 프롬프트 강화
         prompt = f"""
-        당신은 넷플릭스 전문 번역가입니다. 제공된 텍스트는 미국 드라마 대본입니다.
-        가장 자연스러운 한국어 구어체로 번역하세요.
+        당신은 넷플릭스 대본 전문 번역가입니다. 제공된 텍스트를 문맥에 맞게 가장 자연스러운 한국어 구어체로 번역하세요.
         반드시 "JSON object" 형식으로만 응답하세요.
         
-        [절대 규칙 - 줄 밀림 방지]
-        입력된 문장이 총 {len(sentences)}개입니다. 
-        반드시 "0"번부터 "{len(sentences)-1}"번까지의 키(Key)를 하나도 빠짐없이 만들고 번역을 채워넣으세요.
+        [CRITICAL RULE - 절대 규칙]
+        입력된 문장의 개수는 정확히 {len(sentences)}개입니다. 
+        당신은 "0"번부터 "{len(sentences)-1}"번까지의 키(Key)를 반드시, 단 하나도 빠짐없이 모두 출력해야 합니다.
+        중간에 건너뛰거나 요약하면 시스템이 붕괴됩니다. 모든 문장을 개별적으로 1:1 번역하세요.
         
-        출력 형식 예시:
+        출력 형식:
         {{
             "0": "자연스러운 한국어 해석",
-            "1": "자연스러운 한국어 해석"
+            "1": "자연스러운 한국어 해석",
+            ... (중략 없이 끝까지) ...
+            "{len(sentences)-1}": "자연스러운 한국어 해석"
         }}
         
         입력 데이터:
@@ -244,14 +247,20 @@ class MultiAIEngine:
         result_data = extract_safe_json(raw_text)
         final_res = []
         
+        # 만약의 사태를 대비한 2중 철통 방어 파싱
         for i in range(len(sentences)):
             if result_data and isinstance(result_data, dict):
-                val = result_data.get(str(i), "번역 대기 (AI 누락)")
+                val = result_data.get(str(i))
+                if not val and i < len(list(result_data.values())):
+                    # AI가 번호를 못 맞추더라도 순서대로 꽂아 넣음
+                    val = list(result_data.values())[i]
+                
                 if isinstance(val, dict):
                     val = val.get("natural", val.get("literal", str(val)))
-                final_res.append(str(val).replace("\n", " ").strip())
+                
+                final_res.append(str(val).replace("\n", " ").strip() if val else "번역 누락 (AI가 응답을 건너뜀)")
             else:
-                final_res.append("파싱 대기 중")
+                final_res.append("파싱 실패 (AI 응답 오류)")
                 
         return final_res
 
@@ -299,36 +308,43 @@ class MultiAIEngine:
         return text
 
     def split_into_sentences(self, text, split_mode="마침표"):
-        # 🚨 [완벽 패치] 화자(Speaker) 단위로 대사를 묶어주는 스마트 대본 병합기
+        # 🚨 [혁신 패치 1] 유연하고 강력해진 화자(Speaker) 감지 정규식
         if "대본" in split_mode or "자막" in split_mode:
             sentences = []
             current = ""
             lines = text.split('\n')
             
+            # 화자를 인식하는 무적의 스캐너: 한글, 영어, 공백, 대괄호 등이 섞여있어도 끝에 콜론(:)만 있으면 됨!
+            speaker_pattern = re.compile(r'^\s*([a-zA-Z가-힣0-9\s\.\-\[\]]+):')
+            
             for line in lines:
                 line = line.strip()
                 if not line:
-                    continue  # 빈 줄은 무시하고 계속 이어붙입니다.
+                    continue 
                 
-                # 대본 화자 인식 (예: "Rachel:", "ROSS:", "Mr. Heckles:")
-                # 첫 글자가 대문자이고, 알파벳과 공백 등이 오다가 콜론(:)으로 끝나는 패턴
-                is_speaker = bool(re.match(r'^[A-Z][a-zA-Z0-9\s\.\-]+:', line))
+                # 자막 타임코드나 넘버링(SRT 파일 등)은 무시
+                if re.match(r'^\d+$', line) or '-->' in line:
+                    continue
+                
+                is_speaker = bool(speaker_pattern.match(line))
                 
                 if is_speaker:
                     if current:
-                        # 새로운 화자가 등장했으므로, 이전 화자의 모든 대사를 하나로 묶어서 저장!
+                        # 이전에 누적된 대사 덩어리를 하나로 묶어서 저장
                         sentences.append(current.strip())
-                    current = line  # 새로운 화자의 대사 시작
+                    current = line # 새로운 화자의 턴 시작
                 else:
                     if current:
-                        current += " " + line  # 같은 화자면 엔터가 있든 마침표가 있든 무조건 이어붙임!
+                        # 화자가 바뀌지 않았으므로, 이전 대사에 공백을 두고 이어붙임 (엔터 무시)
+                        current += " " + line 
                     else:
-                        current = line  # 화자 이름 없이 시작하는 지문 등
+                        current = line 
             
             if current:
                 sentences.append(current.strip())
                 
-            return [s for s in sentences if len(s) > 2]
+            # 쓰레기 데이터(1단어짜리 등) 필터링
+            return [s for s in sentences if len(s.split()) >= 2]
         else:
             # 일반 마침표 기준
             sentences = re.split(r'(?<=[.!?])\s+', text.strip().replace('\n', ' '))
@@ -514,7 +530,7 @@ with tabs[0]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "대본 분석 완료", "내용": f"{start_idx+1}~{end_idx}번 문장"})
                 st.toast("출석 도장이 찍혔습니다!", icon="📅")
         
-        # 🚨 단독 슬라이더 (기본 30 픽셀)
+        # 🚨 단독 슬라이더 (기본 30 픽셀 적용)
         row_h = st.slider("↕️ 리스트 줄 간격 수동 조절", min_value=30, max_value=200, value=30, step=5)
         
         df_config = {
