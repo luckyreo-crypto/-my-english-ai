@@ -18,13 +18,12 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ============================================================
-# 🚨 화면 및 CSS 설정 (호버 툴팁 고급화)
+# 🚨 화면 및 CSS 설정
 # ============================================================
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
 
 st.markdown("""
 <style>
-/* 마우스 호버 영단어 스마트 디자인 */
 .hover-word {
     cursor: help;
     border-bottom: 2px dashed #ff4b4b;
@@ -88,7 +87,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (DB 연동 완벽 캐싱)
+# [1] 데이터 관리 엔진
 # ============================================================
 def get_gsheet():
     try:
@@ -176,10 +175,9 @@ def delete_from_library(title):
         pass
 
 # ============================================================
-# [2] 하이브리드 멀티 AI 엔진 (JSON 파싱 무적화 & 직독직해 추가)
+# [2] 하이브리드 멀티 AI 엔진 (드라마 패치 & Llama 족쇄 적용)
 # ============================================================
 def extract_safe_json(text):
-    """AI가 뱉은 텍스트에서 완벽하게 JSON 알맹이만 추출하는 절대 파서"""
     try:
         start = text.find('{')
         end = text.rfind('}') + 1
@@ -193,7 +191,7 @@ class MultiAIEngine:
     def __init__(self, selected_engine):
         self.engine_type = selected_engine
 
-    def _call_ai(self, prompt):
+    def _call_ai(self, prompt, expect_json=True):
         try:
             if self.engine_type == "Gemini 2.5 (구글/무료)":
                 if not GEMINI_API_KEY: return "🚨 Gemini API 키가 없습니다."
@@ -204,11 +202,18 @@ class MultiAIEngine:
             elif self.engine_type == "Llama 3.1 (메타/초고속 무료)":
                 if not GROQ_API_KEY: return "🚨 Groq API 키가 없습니다."
                 client = Groq(api_key=GROQ_API_KEY)
-                response = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3
-                )
+                
+                # 🚨 [혁신 패치] Groq JSON 강제 모드 활성화 및 최대 토큰(글자수) 대폭 확장!
+                kwargs = {
+                    "model": "llama-3.1-8b-instant",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 4000 # 20문장 번역이 끊기지 않도록 여유 확보
+                }
+                if expect_json:
+                    kwargs["response_format"] = {"type": "json_object"}
+
+                response = client.chat.completions.create(**kwargs)
                 return response.choices[0].message.content
         except Exception as e:
             return f"🚨 {self.engine_type} 서버 에러: {str(e)}"
@@ -216,18 +221,23 @@ class MultiAIEngine:
     def bulk_translate(self, sentences):
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
-        # 🚨 [기능 4] 직독직해 + 자연스러운 해석 완벽 분리
+        
+        # 🎬 [드라마 패치 1] 프롬프트 뉘앙스 전면 수정
         prompt = f"""
-        당신은 최고의 번역기입니다. 아래 JSON 번호를 유지하며 문장을 번역해 순수 JSON으로만 답하세요.
-        입력: {json.dumps(dict_sentences)}
-        출력 형식:
+        당신은 넷플릭스 미드/영화 전문 번역가입니다. 아래 제공된 텍스트는 일반 문서가 아닌 '대본/회화'입니다.
+        반드시 "JSON object" 형식으로 응답하세요. (마크다운 사용 금지)
+        
+        출력 형식 규칙:
         {{
-            "0": {{"literal": "직독직해(영어 어순대로 끊어 읽기)", "natural": "자연스러운 한국어 의역"}},
-            "1": {{"literal": "직독직해", "natural": "자연스러운 의역"}}
+            "0": {{"literal": "영어 어순대로 끊어 읽는 직독직해", "natural": "실제 배우들이 말하는 듯한 자연스럽고 찰진 한국어 구어체 의역"}},
+            "1": {{"literal": "직독직해", "natural": "구어체 의역"}}
         }}
+        
+        입력 데이터:
+        {json.dumps(dict_sentences)}
         """
-        raw_text = self._call_ai(prompt)
-        if "🚨" in raw_text: return [{"literal": "에러", "natural": "에러"} for _ in sentences]
+        raw_text = self._call_ai(prompt, expect_json=True)
+        if "🚨" in raw_text: return [{"literal": "서버 에러", "natural": "서버 에러"} for _ in sentences]
         
         result_data = extract_safe_json(raw_text)
         if result_data and isinstance(result_data, dict):
@@ -238,38 +248,38 @@ class MultiAIEngine:
                 final_res.append(item)
             return final_res
             
-        return [{"literal": "파싱 실패", "natural": "파싱 실패"} for _ in sentences]
+        return [{"literal": "파싱 대기 중", "natural": "재시도 해주세요"} for _ in sentences]
 
     def deep_analyze(self, text):
-        # 🚨 [기능 1, 2, 3] HTML 생성 금지! 순수 단어 데이터만 요구
+        # 🎬 [드라마 패치 2] 심층 리포트도 드라마 뉘앙스 장착
         prompt = f"""
-        당신은 대한민국 최고의 영어 일타 강사입니다. 아래 문장을 분석하여 순수 JSON으로만 응답하세요.
+        당신은 미드 전문 영어 강사입니다. 아래 대사(문장)를 분석하여 순수 "JSON object" 형식으로만 응답하세요.
         {{
-            "cefr": "이 문장의 CEFR 난이도 (A1, A2, B1, B2, C1, C2 중 하나)",
-            "grammar": "문장의 구조(형식, 주어, 동사 등)와 핵심 문법을 알기 쉽게 설명 (단일 문자열)",
-            "examples": ["1. 영어문장 - 한글해석", "2. 영어문장 - 한글해석"],
+            "cefr": "이 문장의 난이도 (A1 ~ C2)",
+            "grammar": "문장의 구조(형식)와 대화에서 자주 쓰이는 핵심 문법 알기 쉽게 설명 (단일 문자열)",
+            "examples": ["1. 비슷한 상황의 회화 예문 - 한글해석", "2. 비슷한 상황의 회화 예문 - 한글해석"],
             "translations": {{
-                "literal": "영어 어순 그대로의 직독직해",
-                "natural": "자연스러운 우리말 의역"
+                "literal": "영어 어순 그대로의 직독직해 (끊어 읽기)",
+                "natural": "넷플릭스 자막처럼 아주 자연스러운 구어체 의역"
             }},
             "words": [
-                {{"word": "문장 속 영단어(원문 그대로)", "meaning": "한글 뜻", "pronunciation": "원어민의 연음을 살린 한국어 발음 (예: 워러, 체끼라웃)"}}
+                {{"word": "문장 속 영단어", "meaning": "대화 상황에 맞는 한글 뜻", "pronunciation": "원어민의 연음을 살린 한국어 발음 (예: 워러, 체끼라웃)"}}
             ],
-            "context": "이 문장의 뉘앙스/상황/배경 설명",
-            "quiz": {{"question": "핵심 단어나 문법을 활용한 빈칸 ___ 뚫기 퀴즈", "hint": "힌트(뜻)", "answer": "정답 영단어"}}
+            "context": "이 대사가 쓰이는 극중 상황, 문화적 배경, 숨겨진 뉘앙스 설명",
+            "quiz": {{"question": "이 문장을 활용한 빈칸 ___ 뚫기 퀴즈", "hint": "힌트", "answer": "정답 영단어"}}
         }}
         문장: "{text}"
         """
-        raw_text = self._call_ai(prompt)
+        raw_text = self._call_ai(prompt, expect_json=True)
         if "🚨" in raw_text: return None
         return extract_safe_json(raw_text)
 
     def get_pattern_study(self, pattern_text):
         prompt = f"""
-        패턴 '{pattern_text}'에 대한 설명과 예문 10개를 순수 JSON으로 작성하세요.
-        {{"explanation": "패턴 설명", "examples": ["1. 영어 - 해석", "2. 영어 - 해석"]}}
+        회화 패턴 '{pattern_text}'에 대한 설명과 실생활 구어체 예문 10개를 "JSON object" 형식으로 작성하세요.
+        {{"explanation": "패턴 설명 (구어체 뉘앙스 포함)", "examples": ["1. 영어 - 해석", "2. 영어 - 해석"]}}
         """
-        raw_text = self._call_ai(prompt)
+        raw_text = self._call_ai(prompt, expect_json=True)
         if "🚨" in raw_text: return None
         return extract_safe_json(raw_text)
 
@@ -400,7 +410,7 @@ tutor = MultiAIEngine(selected_engine)
 st.title(f"🎓 AI 영어 마스터")
 st.caption(f"🚀 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **캐시 최적화 연동 완료 (초고속)**")
 
-tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
+tabs = st.tabs(["🔍 스마트 대본 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
 with tabs[0]:
     with st.expander("📝 문서 업로드 및 새 텍스트 입력 (클릭해서 열기/접기)", expanded=not bool(st.session_state.current_text)):
@@ -410,9 +420,9 @@ with tabs[0]:
             file = st.file_uploader("파일을 올려주세요 (PDF, DOCX)", type=["pdf", "docx"])
             if file: temp_text = tutor.extract_text(file)
         else:
-            temp_text = st.text_area("영어 문장이나 대본을 붙여넣으세요", height=100)
+            temp_text = st.text_area("영어 대본이나 회화 문장을 붙여넣으세요", height=100)
 
-        split_mode = st.radio("✂️ 문장 나누기 기준 선택", ["📝 마침표(.) 기준 (소설, 기사)", "↵ 줄바꿈(Enter) 기준 (대본, 자막)"], horizontal=False)
+        split_mode = st.radio("✂️ 문장 나누기 기준 선택", ["📝 마침표(.) 기준", "↵ 줄바꿈(Enter) 기준 (대본/자막 추천)"], horizontal=False)
 
         col_apply, col_save, _ = st.columns([2, 2, 6])
         with col_apply:
@@ -450,19 +460,18 @@ with tabs[0]:
         chunk_hash = hash(tuple(current_chunk))
         
         if st.session_state.page_translations.get("hash") != chunk_hash:
-            with st.spinner(f"⚡ AI 엔진 가동 중... (직독직해 분석 1~2초 소요)"):
+            with st.spinner(f"⚡ 넷플릭스 모드 가동 중... (직독직해 분석 중)"):
                 raw_trans = tutor.bulk_translate(current_chunk)
                 st.session_state.page_translations = {"hash": chunk_hash, "data": raw_trans}
         
         translations = st.session_state.page_translations["data"]
         clean_chunk = [str(s).replace("\n", " ").strip() for s in current_chunk]
         
-        # 🚨 [UI 혁신] 직독직해 + 자연스러운 해석 3단 표 생성!
         df = pd.DataFrame({
             "No.": range(start_idx + 1, end_idx + 1),
             "English (원문)": clean_chunk,
             "Korean (직독직해)": [t.get("literal", "").replace("\n", " ").strip() for t in translations],
-            "Korean (자연스러운 해석)": [t.get("natural", "").replace("\n", " ").strip() for t in translations]
+            "Korean (자연스러운 의역)": [t.get("natural", "").replace("\n", " ").strip() for t in translations]
         })
         df.set_index("No.", inplace=True)
         
@@ -471,7 +480,7 @@ with tabs[0]:
             st.write("### 📖 병렬 학습 리스트 (문장을 클릭하세요!)")
         with col_btn:
             if st.button("📝 학습 달력에 출석 기록", use_container_width=True):
-                st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "문서 분석 완료", "내용": f"{start_idx+1}~{end_idx}번 문장"})
+                st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "대본 분석 완료", "내용": f"{start_idx+1}~{end_idx}번 문장"})
                 st.toast("출석 도장이 찍혔습니다!", icon="📅")
         
         max_len = max([len(s) for s in clean_chunk] + [len(t.get("literal", "")) for t in translations] + [0])
@@ -490,7 +499,7 @@ with tabs[0]:
         df_config = {
             "English (원문)": st.column_config.TextColumn(width="large"),
             "Korean (직독직해)": st.column_config.TextColumn(width="medium"),
-            "Korean (자연스러운 해석)": st.column_config.TextColumn(width="medium")
+            "Korean (자연스러운 의역)": st.column_config.TextColumn(width="medium")
         }
 
         try:
@@ -514,13 +523,12 @@ with tabs[0]:
         if selected_rows:
             target_s = clean_chunk[selected_rows[0]]
             st.divider()
-            st.markdown(f"### 🕵️‍♂️ {start_idx + selected_rows[0] + 1}번 문장 심층 멘토링 리포트")
+            st.markdown(f"### 🕵️‍♂️ {start_idx + selected_rows[0] + 1}번 대사 심층 멘토링")
             
-            with st.spinner(f"초고속 심층 분석 및 스마트 호버 단어장 생성 중..."):
+            with st.spinner(f"초고속 심층 분석 및 스마트 호버 생성 중..."):
                 analysis = tutor.deep_analyze(target_s)
                 
                 if analysis:
-                    # 🚨 [혁신 패치 1] HTML 생성을 파이썬이 담당 (JSON 파괴 원천 차단!)
                     words_list = analysis.get("words", [])
                     if words_list and isinstance(words_list, list):
                         html_parts = []
@@ -534,7 +542,7 @@ with tabs[0]:
                         hover_html = target_s
 
                     cefr_level = analysis.get("cefr", "판독 불가")
-                    st.markdown(f"<div class='cefr-badge'>📊 난이도: {cefr_level}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='cefr-badge'>📊 드라마 실전 난이도: {cefr_level}</div>", unsafe_allow_html=True)
 
                     grammar_str = str(analysis.get('grammar', '정보 없음'))
                     
@@ -557,11 +565,11 @@ with tabs[0]:
                     c1.success(f"📐 **문법 & 형식 핵심 강의**\n\n{grammar_str}")
                     c2.warning(f"💡 **응용 실전 예시**\n\n{examples_text}")
                     bg_text = f"🎯 **직독직해:**\n{lit_trans}\n\n" \
-                              f"🎯 **자연스러운 해석:**\n{nat_trans}\n\n" \
+                              f"🎯 **자연스러운 의역:**\n{nat_trans}\n\n" \
                               f"🗣️ **원어민 실제 발음:**\n{pronun_str}\n\n" \
                               f"📝 **단어장:**\n{words_str}\n\n" \
-                              f"🌍 **배경/뉘앙스:**\n{context_str}"
-                    c3.error(f"🔍 **문장 심층 지식**\n\n{bg_text}")
+                              f"🌍 **극중 뉘앙스/배경:**\n{context_str}"
+                    c3.error(f"🔍 **대사 심층 지식**\n\n{bg_text}")
 
                     st.divider()
                     with st.expander("🏆 실력 점검! AI 빈칸 채우기 퀴즈 (클릭해서 열기)"):
@@ -592,7 +600,7 @@ with tabs[1]:
     if 'p_study' in st.session_state:
         st.markdown(f"### 💡 {st.session_state.p_title}")
         st.info(st.session_state.p_study.get("explanation", "설명 데이터를 불러오지 못했습니다."))
-        st.write("#### ✍️ 실전 예문 10선")
+        st.write("#### ✍️ 실전 회화 예문 10선")
         for ex in st.session_state.p_study.get("examples", []): st.write(f"- {ex}")
         st.divider()
         if st.checkbox("✅ 오늘 이 패턴 마스터!"):
