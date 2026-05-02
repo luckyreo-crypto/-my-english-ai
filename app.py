@@ -87,7 +87,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진
+# [1] 데이터 관리 엔진 (DB 연동 완벽 캐싱)
 # ============================================================
 def get_gsheet():
     try:
@@ -220,53 +220,42 @@ class MultiAIEngine:
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
         
-        # 🚨 [완벽 패치] 직독직해 한국어 강제 지시 및 인덱스 고정
+        # 🚨 [개선 1 & 4] 직독직해 제거, 줄 꼬임 완벽 방지, 자연스러운 해석만 요구
         prompt = f"""
-        당신은 넷플릭스 전문 번역가입니다. 아래 제공된 텍스트는 대화/대본입니다.
+        당신은 넷플릭스 전문 번역가입니다. 제공된 텍스트를 가장 자연스러운 한국어 구어체로 번역하세요.
         반드시 "JSON object" 형식으로만 응답하세요.
-        
-        [매우 중요한 규칙]
-        1. "literal" 항목에는 절대 영어 원문을 복사하지 마세요! 반드시 "한국어"로 어순에 맞게 끊어서 직역해야 합니다.
-        2. 제공된 모든 번호(키)를 빠짐없이 번역하세요.
         
         출력 형식 예시:
         {{
-            "0": {{"literal": "[한국어] 나는 / 간다 / 학교에", "natural": "[한국어] 나 학교 가."}},
-            "1": {{"literal": "[한국어] 그녀는 / 원한다 / 사과를", "natural": "[한국어] 걔 사과 먹고 싶대."}}
+            "0": "자연스러운 한국어 해석",
+            "1": "자연스러운 한국어 해석"
         }}
         
         입력 데이터:
         {json.dumps(dict_sentences)}
         """
         raw_text = self._call_ai(prompt, expect_json=True)
-        if "🚨" in raw_text: return [{"literal": "서버 에러", "natural": "서버 에러"} for _ in sentences]
+        if "🚨" in raw_text: return ["서버 에러"] * len(sentences)
         
         result_data = extract_safe_json(raw_text)
         final_res = []
         
-        # 🚨 [줄 밀림 방지 완벽 패치] AI가 순서를 섞거나 누락해도 원본 개수와 정확히 매칭!
-        if result_data and isinstance(result_data, dict):
-            values_list = list(result_data.values())
-            for i in range(len(sentences)):
-                # 1순위: 정확한 번호 매칭, 2순위: AI가 1번부터 시작했을 경우 매칭, 3순위: 순서대로 강제 매칭
-                item = result_data.get(str(i)) or result_data.get(str(i+1))
-                if not item and i < len(values_list):
-                    item = values_list[i]
-                
-                if isinstance(item, dict):
-                    lit = item.get("literal", "번역 누락")
-                    nat = item.get("natural", "번역 누락")
-                    # 방어 코드: 혹시라도 영어가 그대로 나왔다면
-                    if lit.strip() == sentences[i].strip():
-                        lit = "[직독직해 오류] " + nat
-                    final_res.append({"literal": lit, "natural": nat})
-                elif isinstance(item, str):
-                    final_res.append({"literal": item, "natural": item})
-                else:
-                    final_res.append({"literal": "번역 누락", "natural": "번역 누락"})
-            return final_res
+        # 🚨 [줄 밀림 원천 차단] 무조건 원문 개수와 똑같이 리스트를 1:1 매칭 조립
+        for i in range(len(sentences)):
+            val = "번역 누락"
+            if result_data and isinstance(result_data, dict):
+                val = result_data.get(str(i))
+                # AI가 번호를 못 맞췄을 경우 값만 순서대로 빼오기
+                if not val and i < len(list(result_data.values())):
+                    val = list(result_data.values())[i]
             
-        return [{"literal": "파싱 대기 중", "natural": "재시도 해주세요"} for _ in sentences]
+            # 혹시 AI가 기존 포맷(dict)으로 뱉었을 경우를 위한 방어
+            if isinstance(val, dict):
+                val = val.get("natural", val.get("literal", str(val)))
+            
+            final_res.append(str(val))
+            
+        return final_res
 
     def deep_analyze(self, text):
         prompt = f"""
@@ -312,9 +301,32 @@ class MultiAIEngine:
         return text
 
     def split_into_sentences(self, text, split_mode="마침표"):
+        # 🚨 [개선 5] 대본 분리 기능 초강화 (단어단어 쪼개짐 박멸)
         if "줄바꿈" in split_mode:
             lines = text.split('\n')
-            return [line.strip() for line in lines if len(line.strip()) > 2]
+            sentences = []
+            current = ""
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    if current:
+                        sentences.append(current)
+                        current = ""
+                    continue
+                
+                # 기존 텍스트에 이어 붙이기
+                if current: current += " " + line
+                else: current = line
+                
+                # 문장이 온전히 끝나는 기호면 하나의 덩어리로 확정 짓기
+                if current.endswith(('.', '?', '!', '"', '”', '’')):
+                    sentences.append(current)
+                    current = ""
+                    
+            if current: sentences.append(current)
+            
+            # 너무 짧은 1단어짜리 쓰레기 텍스트 제거
+            return [s.strip() for s in sentences if len(s.split()) >= 2]
         else:
             sentences = re.split(r'(?<=[.!?])\s+', text.strip().replace('\n', ' '))
             return [s.strip() for s in sentences if len(s.strip()) > 5]
@@ -439,7 +451,8 @@ with tabs[0]:
         else:
             temp_text = st.text_area("영어 대본이나 회화 문장을 붙여넣으세요", height=100)
 
-        split_mode = st.radio("✂️ 문장 나누기 기준 선택", ["📝 마침표(.) 기준", "↵ 줄바꿈(Enter) 기준 (대본/자막 추천)"], horizontal=False)
+        # 🚨 [개선 5] 대본 기준 묶기 설명 보강
+        split_mode = st.radio("✂️ 문장 나누기 기준 선택", ["📝 마침표(.) 기준", "↵ 대본/자막 기준 (의미 단위로 똑똑하게 묶기)"], horizontal=False)
 
         col_apply, col_save, _ = st.columns([2, 2, 6])
         with col_apply:
@@ -484,12 +497,11 @@ with tabs[0]:
         translations = st.session_state.page_translations["data"]
         clean_chunk = [str(s).replace("\n", " ").strip() for s in current_chunk]
         
-        # 원문과 번역 수평 맞춤 완벽 보장
+        # 🚨 [개선 1] 직독직해 열을 빼고 원문-자연스러운해석 2열로 깔끔하게 구성
         df = pd.DataFrame({
             "No.": range(start_idx + 1, end_idx + 1),
             "English (원문)": clean_chunk,
-            "Korean (직독직해)": [str(t.get("literal", "번역 대기")).replace("\n", " ") for t in translations],
-            "Korean (자연스러운 의역)": [str(t.get("natural", "번역 대기")).replace("\n", " ") for t in translations]
+            "Korean (자연스러운 해석)": [t.replace("\n", " ").strip() for t in translations]
         })
         df.set_index("No.", inplace=True)
         
@@ -501,24 +513,12 @@ with tabs[0]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "대본 분석 완료", "내용": f"{start_idx+1}~{end_idx}번 문장"})
                 st.toast("출석 도장이 찍혔습니다!", icon="📅")
         
-        # 줄 간격 수동/자동 슬라이더
-        max_len = max([len(s) for s in clean_chunk] + [len(str(t.get("literal", ""))) for t in translations] + [0])
-        auto_height = max(45, (max_len // 35 + 1) * 45) 
-
-        col_auto, col_slider = st.columns([1, 3])
-        with col_auto:
-            is_auto = st.checkbox("✨ 줄 간격 자동 맞춤", value=True)
-        with col_slider:
-            if is_auto:
-                row_h = auto_height
-                st.caption(f"*(현재 화면 글자수에 맞춰 높이가 {row_h}px로 자동 조정되었습니다)*")
-            else:
-                row_h = st.slider("↕️ 수동 높이 조절", 30, 250, auto_height, 5, label_visibility="collapsed")
+        # 🚨 [개선 2, 3] 자동 높이 제거 & 슬라이더만 단독 배치 (기본값 30)
+        row_h = st.slider("↕️ 리스트 줄 간격 수동 조절", min_value=30, max_value=200, value=30, step=5)
         
         df_config = {
             "English (원문)": st.column_config.TextColumn(width="large"),
-            "Korean (직독직해)": st.column_config.TextColumn(width="medium"),
-            "Korean (자연스러운 의역)": st.column_config.TextColumn(width="medium")
+            "Korean (자연스러운 해석)": st.column_config.TextColumn(width="large")
         }
 
         try:
@@ -548,11 +548,9 @@ with tabs[0]:
                 analysis = tutor.deep_analyze(target_s)
                 
                 if analysis:
-                    # 호버 생성 엔진 (파이썬에서 직접 조립)
                     words_list = analysis.get("words", [])
                     if words_list and isinstance(words_list, list):
                         html_parts = []
-                        # 문장을 띄어쓰기 단위로 대략 분해 후 단어가 매칭되면 호버로 감싸기
                         words_in_sentence = target_s.split()
                         for word in words_in_sentence:
                             clean_word = re.sub(r'[^\w\']', '', word).lower()
@@ -593,7 +591,7 @@ with tabs[0]:
                     c1, c2, c3 = st.columns(3)
                     c1.success(f"📐 **문법 & 형식 핵심 강의**\n\n{grammar_str}")
                     c2.warning(f"💡 **응용 실전 예시**\n\n{examples_text}")
-                    bg_text = f"🎯 **직독직해:**\n{lit_trans}\n\n" \
+                    bg_text = f"🎯 **한국어 어순 직독직해:**\n{lit_trans}\n\n" \
                               f"🎯 **자연스러운 의역:**\n{nat_trans}\n\n" \
                               f"🗣️ **원어민 실제 발음:**\n{pronun_str}\n\n" \
                               f"📝 **단어장:**\n{words_str}\n\n" \
