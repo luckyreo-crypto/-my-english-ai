@@ -51,23 +51,47 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🌟 정석 DB 연결 코드 🌟)
+# [1] 데이터 관리 엔진 (🛡️ QA 진단 & 자동 복구 시스템 탑재)
 # ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        # JSON 파일을 읽어옵니다.
         creds_dict = json.loads(GCP_SA_JSON, strict=False)
+        private_key = creds_dict.get("private_key", "")
         
-        # 🚨 [정석 해결책] 암호는 절대 건드리지 않고, 스트림릿이 오해하는 줄바꿈 문자(\n)만 실제 엔터로 바꿔줍니다!
-        if "\\n" in creds_dict["private_key"]:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        # 🛡️ QA: 열쇠 강제 복구 및 진단 시스템
+        import textwrap
+        
+        match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', private_key, re.DOTALL)
+        if not match:
+            st.error("🚨 [QA 진단] 열쇠 훼손: 'BEGIN' 또는 'END' 태그를 찾을 수 없습니다. Secrets에 복사한 내용이 누락되었습니다.")
+            return None
             
+        payload = match.group(1)
+        
+        # 1. 불순물 박멸 (A-Z, a-z, 0-9, +, /, = 만 남기고 에러를 낸 마침표 등 싹 제거)
+        payload_clean = re.sub(r'[^A-Za-z0-9+/=]', '', payload)
+        
+        # 2. 길이 검증 (구글 암호키는 일반적으로 Base64 인코딩 시 약 1600자 이상입니다)
+        if len(payload_clean) < 1000:
+            st.error(f"🚨 [QA 진단] Short Data 에러 원인 발견!: 열쇠를 복사할 때 뒷부분이 잘렸습니다! (현재 글자 수: {len(payload_clean)}자 / 정상 길이: 약 1600자 이상). 텍스트 전체(Ctrl+A)를 빠짐없이 다시 복사해주세요.")
+            return None
+            
+        # 3. 정규 규격으로 완벽 재포장
+        payload_wrapped = '\n'.join(textwrap.wrap(payload_clean, 64))
+        perfect_key = f"-----BEGIN PRIVATE KEY-----\n{payload_wrapped}\n-----END PRIVATE KEY-----\n"
+        creds_dict["private_key"] = perfect_key
+        
+        # 연결 시도
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         sheet = client.open_by_url(GSHEET_URL).sheet1
         return sheet
+        
+    except json.JSONDecodeError as e:
+        st.error(f"🚨 [QA 진단] JSON 파싱 에러: Secrets에 붙여넣은 텍스트가 깨져있습니다. 따옴표나 괄호가 누락되었습니다. 상세: {e}")
+        return None
     except Exception as e:
         st.error(f"🚨 DB 연결 에러: {e}")
         return None
