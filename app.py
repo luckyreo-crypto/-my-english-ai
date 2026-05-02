@@ -175,7 +175,7 @@ def delete_from_library(title):
         pass
 
 # ============================================================
-# [2] 하이브리드 멀티 AI 엔진 (드라마 패치 & Llama 족쇄 적용)
+# [2] 하이브리드 멀티 AI 엔진
 # ============================================================
 def extract_safe_json(text):
     try:
@@ -202,13 +202,11 @@ class MultiAIEngine:
             elif self.engine_type == "Llama 3.1 (메타/초고속 무료)":
                 if not GROQ_API_KEY: return "🚨 Groq API 키가 없습니다."
                 client = Groq(api_key=GROQ_API_KEY)
-                
-                # 🚨 [혁신 패치] Groq JSON 강제 모드 활성화 및 최대 토큰(글자수) 대폭 확장!
                 kwargs = {
                     "model": "llama-3.1-8b-instant",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
-                    "max_tokens": 4000 # 20문장 번역이 끊기지 않도록 여유 확보
+                    "max_tokens": 4000
                 }
                 if expect_json:
                     kwargs["response_format"] = {"type": "json_object"}
@@ -222,15 +220,19 @@ class MultiAIEngine:
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
         
-        # 🎬 [드라마 패치 1] 프롬프트 뉘앙스 전면 수정
+        # 🚨 [완벽 패치] 직독직해 한국어 강제 지시 및 인덱스 고정
         prompt = f"""
-        당신은 넷플릭스 미드/영화 전문 번역가입니다. 아래 제공된 텍스트는 일반 문서가 아닌 '대본/회화'입니다.
-        반드시 "JSON object" 형식으로 응답하세요. (마크다운 사용 금지)
+        당신은 넷플릭스 전문 번역가입니다. 아래 제공된 텍스트는 대화/대본입니다.
+        반드시 "JSON object" 형식으로만 응답하세요.
         
-        출력 형식 규칙:
+        [매우 중요한 규칙]
+        1. "literal" 항목에는 절대 영어 원문을 복사하지 마세요! 반드시 "한국어"로 어순에 맞게 끊어서 직역해야 합니다.
+        2. 제공된 모든 번호(키)를 빠짐없이 번역하세요.
+        
+        출력 형식 예시:
         {{
-            "0": {{"literal": "영어 어순대로 끊어 읽는 직독직해", "natural": "실제 배우들이 말하는 듯한 자연스럽고 찰진 한국어 구어체 의역"}},
-            "1": {{"literal": "직독직해", "natural": "구어체 의역"}}
+            "0": {{"literal": "[한국어] 나는 / 간다 / 학교에", "natural": "[한국어] 나 학교 가."}},
+            "1": {{"literal": "[한국어] 그녀는 / 원한다 / 사과를", "natural": "[한국어] 걔 사과 먹고 싶대."}}
         }}
         
         입력 데이터:
@@ -240,33 +242,48 @@ class MultiAIEngine:
         if "🚨" in raw_text: return [{"literal": "서버 에러", "natural": "서버 에러"} for _ in sentences]
         
         result_data = extract_safe_json(raw_text)
+        final_res = []
+        
+        # 🚨 [줄 밀림 방지 완벽 패치] AI가 순서를 섞거나 누락해도 원본 개수와 정확히 매칭!
         if result_data and isinstance(result_data, dict):
-            final_res = []
+            values_list = list(result_data.values())
             for i in range(len(sentences)):
-                item = result_data.get(str(i), {"literal": "번역 누락", "natural": "번역 누락"})
-                if isinstance(item, str): item = {"literal": item, "natural": item}
-                final_res.append(item)
+                # 1순위: 정확한 번호 매칭, 2순위: AI가 1번부터 시작했을 경우 매칭, 3순위: 순서대로 강제 매칭
+                item = result_data.get(str(i)) or result_data.get(str(i+1))
+                if not item and i < len(values_list):
+                    item = values_list[i]
+                
+                if isinstance(item, dict):
+                    lit = item.get("literal", "번역 누락")
+                    nat = item.get("natural", "번역 누락")
+                    # 방어 코드: 혹시라도 영어가 그대로 나왔다면
+                    if lit.strip() == sentences[i].strip():
+                        lit = "[직독직해 오류] " + nat
+                    final_res.append({"literal": lit, "natural": nat})
+                elif isinstance(item, str):
+                    final_res.append({"literal": item, "natural": item})
+                else:
+                    final_res.append({"literal": "번역 누락", "natural": "번역 누락"})
             return final_res
             
         return [{"literal": "파싱 대기 중", "natural": "재시도 해주세요"} for _ in sentences]
 
     def deep_analyze(self, text):
-        # 🎬 [드라마 패치 2] 심층 리포트도 드라마 뉘앙스 장착
         prompt = f"""
-        당신은 미드 전문 영어 강사입니다. 아래 대사(문장)를 분석하여 순수 "JSON object" 형식으로만 응답하세요.
+        당신은 미드 전문 영어 강사입니다. 아래 대사를 분석하여 순수 "JSON object" 형식으로만 응답하세요.
         {{
-            "cefr": "이 문장의 난이도 (A1 ~ C2)",
-            "grammar": "문장의 구조(형식)와 대화에서 자주 쓰이는 핵심 문법 알기 쉽게 설명 (단일 문자열)",
+            "cefr": "이 문장의 난이도 (A1, A2, B1, B2, C1, C2 중 하나)",
+            "grammar": "문장의 구조(형식)와 대화에서 자주 쓰이는 핵심 문법 알기 쉽게 설명",
             "examples": ["1. 비슷한 상황의 회화 예문 - 한글해석", "2. 비슷한 상황의 회화 예문 - 한글해석"],
             "translations": {{
-                "literal": "영어 어순 그대로의 직독직해 (끊어 읽기)",
+                "literal": "한국어로 번역한 영어 어순 직독직해",
                 "natural": "넷플릭스 자막처럼 아주 자연스러운 구어체 의역"
             }},
             "words": [
                 {{"word": "문장 속 영단어", "meaning": "대화 상황에 맞는 한글 뜻", "pronunciation": "원어민의 연음을 살린 한국어 발음 (예: 워러, 체끼라웃)"}}
             ],
-            "context": "이 대사가 쓰이는 극중 상황, 문화적 배경, 숨겨진 뉘앙스 설명",
-            "quiz": {{"question": "이 문장을 활용한 빈칸 ___ 뚫기 퀴즈", "hint": "힌트", "answer": "정답 영단어"}}
+            "context": "이 대사가 쓰이는 극중 상황, 문화적 배경 설명",
+            "quiz": {{"question": "이 문장을 활용한 빈칸 ___ 뚫기 퀴즈", "hint": "힌트(뜻)", "answer": "정답 영단어"}}
         }}
         문장: "{text}"
         """
@@ -277,7 +294,7 @@ class MultiAIEngine:
     def get_pattern_study(self, pattern_text):
         prompt = f"""
         회화 패턴 '{pattern_text}'에 대한 설명과 실생활 구어체 예문 10개를 "JSON object" 형식으로 작성하세요.
-        {{"explanation": "패턴 설명 (구어체 뉘앙스 포함)", "examples": ["1. 영어 - 해석", "2. 영어 - 해석"]}}
+        {{"explanation": "패턴 설명", "examples": ["1. 영어 - 해석", "2. 영어 - 해석"]}}
         """
         raw_text = self._call_ai(prompt, expect_json=True)
         if "🚨" in raw_text: return None
@@ -408,7 +425,7 @@ with st.sidebar:
 tutor = MultiAIEngine(selected_engine)
 
 st.title(f"🎓 AI 영어 마스터")
-st.caption(f"🚀 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **캐시 최적화 연동 완료 (초고속)**")
+st.caption(f"🚀 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **캐시 최적화 연동 완료**")
 
 tabs = st.tabs(["🔍 스마트 대본 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
@@ -441,7 +458,7 @@ with tabs[0]:
                 if st.button("저장 확정"):
                     if doc_title and temp_text.strip():
                         save_to_library(doc_title, temp_text)
-                        st.toast(f"🎉 '{doc_title}' 문서가 안전하게 저장되었습니다!", icon="✅")
+                        st.toast(f"🎉 '{doc_title}' 문서 저장 완료!", icon="✅")
                         time.sleep(1)
                         st.rerun()
                     else:
@@ -460,18 +477,19 @@ with tabs[0]:
         chunk_hash = hash(tuple(current_chunk))
         
         if st.session_state.page_translations.get("hash") != chunk_hash:
-            with st.spinner(f"⚡ 넷플릭스 모드 가동 중... (직독직해 분석 중)"):
+            with st.spinner(f"⚡ 넷플릭스 번역 모드 가동 중..."):
                 raw_trans = tutor.bulk_translate(current_chunk)
                 st.session_state.page_translations = {"hash": chunk_hash, "data": raw_trans}
         
         translations = st.session_state.page_translations["data"]
         clean_chunk = [str(s).replace("\n", " ").strip() for s in current_chunk]
         
+        # 원문과 번역 수평 맞춤 완벽 보장
         df = pd.DataFrame({
             "No.": range(start_idx + 1, end_idx + 1),
             "English (원문)": clean_chunk,
-            "Korean (직독직해)": [t.get("literal", "").replace("\n", " ").strip() for t in translations],
-            "Korean (자연스러운 의역)": [t.get("natural", "").replace("\n", " ").strip() for t in translations]
+            "Korean (직독직해)": [str(t.get("literal", "번역 대기")).replace("\n", " ") for t in translations],
+            "Korean (자연스러운 의역)": [str(t.get("natural", "번역 대기")).replace("\n", " ") for t in translations]
         })
         df.set_index("No.", inplace=True)
         
@@ -483,8 +501,9 @@ with tabs[0]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "대본 분석 완료", "내용": f"{start_idx+1}~{end_idx}번 문장"})
                 st.toast("출석 도장이 찍혔습니다!", icon="📅")
         
-        max_len = max([len(s) for s in clean_chunk] + [len(t.get("literal", "")) for t in translations] + [0])
-        auto_height = max(45, (max_len // 40 + 1) * 45) 
+        # 줄 간격 수동/자동 슬라이더
+        max_len = max([len(s) for s in clean_chunk] + [len(str(t.get("literal", ""))) for t in translations] + [0])
+        auto_height = max(45, (max_len // 35 + 1) * 45) 
 
         col_auto, col_slider = st.columns([1, 3])
         with col_auto:
@@ -492,7 +511,7 @@ with tabs[0]:
         with col_slider:
             if is_auto:
                 row_h = auto_height
-                st.caption(f"*(현재 화면 글자수에 맞춰 높이가 {row_h}px로 가장 타이트하게 조정되었습니다)*")
+                st.caption(f"*(현재 화면 글자수에 맞춰 높이가 {row_h}px로 자동 조정되었습니다)*")
             else:
                 row_h = st.slider("↕️ 수동 높이 조절", 30, 250, auto_height, 5, label_visibility="collapsed")
         
@@ -529,14 +548,24 @@ with tabs[0]:
                 analysis = tutor.deep_analyze(target_s)
                 
                 if analysis:
+                    # 호버 생성 엔진 (파이썬에서 직접 조립)
                     words_list = analysis.get("words", [])
                     if words_list and isinstance(words_list, list):
                         html_parts = []
-                        for w_info in words_list:
-                            w_en = str(w_info.get("word", ""))
-                            w_mean = str(w_info.get("meaning", "")).replace("'", "&#39;").replace('"', '&quot;')
-                            w_pron = str(w_info.get("pronunciation", "")).replace("'", "&#39;").replace('"', '&quot;')
-                            html_parts.append(f"<span class='hover-word' title='뜻: {w_mean} | 발음: {w_pron}'>{w_en}</span>")
+                        # 문장을 띄어쓰기 단위로 대략 분해 후 단어가 매칭되면 호버로 감싸기
+                        words_in_sentence = target_s.split()
+                        for word in words_in_sentence:
+                            clean_word = re.sub(r'[^\w\']', '', word).lower()
+                            matched = False
+                            for w_info in words_list:
+                                if w_info.get("word", "").lower() == clean_word:
+                                    w_mean = str(w_info.get("meaning", "")).replace("'", "&#39;").replace('"', '&quot;')
+                                    w_pron = str(w_info.get("pronunciation", "")).replace("'", "&#39;").replace('"', '&quot;')
+                                    html_parts.append(f"<span class='hover-word' title='뜻: {w_mean} | 발음: {w_pron}'>{word}</span>")
+                                    matched = True
+                                    break
+                            if not matched:
+                                html_parts.append(word)
                         hover_html = " ".join(html_parts)
                     else:
                         hover_html = target_s
@@ -558,8 +587,8 @@ with tabs[0]:
                     
                     words_str = "\n".join([f"- **{w.get('word','')}**: {w.get('meaning','')} [{w.get('pronunciation','')}]" for w in words_list]) if words_list else "정보 없음"
 
-                    st.info("🖱️ **스마트 단어장:** 아래 영단어 점선 위에 마우스를 슥~ 올려보세요! 숨겨진 뜻과 원어민 찰진 연음이 툴팁으로 뜹니다.")
-                    st.markdown(f"<div class='info-box' style='font-size: 1.4em; line-height: 2.0;'>{hover_html}</div>", unsafe_allow_html=True)
+                    st.info("🖱️ **스마트 단어장:** 아래 문장의 단어 위에 마우스를 슥~ 올려보세요! 숨겨진 뜻과 원어민 찰진 연음이 툴팁으로 뜹니다.")
+                    st.markdown(f"<div class='info-box' style='font-size: 1.5em; line-height: 2.0; font-weight: bold;'>{hover_html}</div>", unsafe_allow_html=True)
                     
                     c1, c2, c3 = st.columns(3)
                     c1.success(f"📐 **문법 & 형식 핵심 강의**\n\n{grammar_str}")
@@ -595,7 +624,7 @@ with tabs[1]:
                 st.session_state.p_study = p_data
                 st.session_state.p_title = selected_p
             else:
-                st.toast("AI 파싱 에러! 다시 눌러주세요.", icon="🚨")
+                st.toast("AI 에러! 다시 눌러주세요.", icon="🚨")
 
     if 'p_study' in st.session_state:
         st.markdown(f"### 💡 {st.session_state.p_title}")
