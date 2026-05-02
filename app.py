@@ -54,47 +54,40 @@ if not st.session_state.authenticated:
 # ============================================================
 # [1] 데이터 관리 엔진 (🌟 절대 무적 DB 연결 시스템 🌟)
 # ============================================================
+# ============================================================
+# [1] 데이터 관리 엔진 (🌟 정확한 에러 진단 기능 추가)
+# ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
     try:
-        # 1. 스트림릿 금고에서 텍스트를 꺼내옵니다.
-        raw_secret = GCP_SA_JSON
-        
-        # 🚨 [가장 중요한 핵심] 에러의 주범인 '유령 공백(NBSP)'을 일반 공백으로 강제 세탁합니다.
-        raw_secret = raw_secret.replace('\xa0', ' ')
-        
-        # 2. 깨끗해진 텍스트를 JSON으로 파싱합니다.
+        raw_secret = GCP_SA_JSON.replace('\xa0', ' ').replace('\u200b', ' ')
         creds_dict = json.loads(raw_secret, strict=False)
         
-        # 3. 열쇠 몸통(Private Key)만 꺼내서 완벽한 규격으로 강제 재조립합니다.
-        pk = creds_dict.get("private_key", "")
-        pk = pk.replace("\\n", "\n") # 백슬래시 n을 진짜 엔터로 치환
-        
+        # 열쇠 찌그러짐 방지 로직
+        pk = creds_dict.get("private_key", "").replace("\\n", "\n")
         if "BEGIN PRIVATE KEY" in pk:
-            # 머리와 꼬리를 자르고 순수 암호문만 빼냅니다.
             header = "-----BEGIN PRIVATE KEY-----"
             footer = "-----END PRIVATE KEY-----"
             body = pk.split(header)[-1].split(footer)[0]
-            
-            # 암호문 안에 섞인 모든 쓰레기(띄어쓰기, 줄바꿈)를 완전 삭제합니다.
-            body = body.replace("\n", "").replace(" ", "").strip()
-            
-            # 깨끗해진 순수 암호문을 구글 표준 규격인 64글자씩 다시 예쁘게 포장합니다.
+            body = re.sub(r'[^A-Za-z0-9+/=]', '', body) 
             wrapped_body = "\n".join(textwrap.wrap(body, 64))
-            
-            # 머리와 꼬리를 다시 완벽하게 이어 붙입니다.
             pk = f"{header}\n{wrapped_body}\n{footer}\n"
-            
-        # 완벽하게 복구된 열쇠를 다시 꽂아 넣습니다.
         creds_dict["private_key"] = pk
         
-        # 4. 구글 시트 연결 시도
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
+        
+        # 🚨 여기서 에러가 나면 권한(공유) 문제이거나 주소가 틀린 것입니다!
         sheet = client.open_by_url(GSHEET_URL).sheet1
         return sheet
         
+    except json.JSONDecodeError as e:
+        st.error(f"🚨 JSON 파싱 에러: 복사하신 텍스트에 오타나 누락이 있습니다. 상세: {e}")
+        return None
+    except gspread.exceptions.APIError as e:
+        st.error(f"🚨 권한 차단됨: 구글 시트 우측 상단 [공유] 버튼을 누르고 '{creds_dict.get('client_email')}' 주소를 '편집자'로 꼭 추가해주세요!")
+        return None
     except Exception as e:
         st.error(f"🚨 DB 연결 에러 상세: {e}")
         return None
