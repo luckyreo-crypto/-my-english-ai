@@ -12,7 +12,7 @@ import math
 from groq import Groq
 import textwrap
 import traceback
-import time  # 🚨 [추가됨] 사람의 눈을 위해 1.5초를 기다려줄 시간 부품
+import time
 
 # 구글 스프레드시트 DB용 라이브러리
 import gspread
@@ -54,7 +54,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (DB 연동 완벽 작동 중!)
+# [1] 데이터 관리 엔진 (🌟 대소문자 유연 대응 시스템)
 # ============================================================
 def get_gsheet():
     try:
@@ -84,42 +84,75 @@ def get_gsheet():
 def load_library():
     sheet = get_gsheet()
     if not sheet: return {}
-    records = sheet.get_all_records()
-    library = {}
-    for row in records:
-        if row.get('Title'):
-            library[str(row['Title'])] = {
-                "text": str(row.get('Text', '')), 
-                "date": str(row.get('Date', ''))
-            }
-    return library
+    
+    try:
+        records = sheet.get_all_records()
+        library = {}
+        for row in records:
+            # 🚨 [수정 포인트] 시트의 헤더가 소문자(title)든 대문자(Title)든 상관없이 찾습니다.
+            # 모든 키를 소문자로 바꿔서 매칭되는 실제 키 이름을 알아냅니다.
+            real_keys = {k.lower(): k for k in row.keys()}
+            
+            t_key = real_keys.get('title')
+            txt_key = real_keys.get('text')
+            d_key = real_keys.get('date')
+            
+            # 실제 데이터 추출
+            title_val = row.get(t_key) if t_key else None
+            text_val = row.get(txt_key, '') if txt_key else ''
+            date_val = row.get(d_key, '') if d_key else ''
+            
+            if title_val:
+                library[str(title_val)] = {
+                    "text": str(text_val), 
+                    "date": str(date_val)
+                }
+        return library
+    except Exception as e:
+        # 만약 get_all_records에서 에러가 나면 데이터가 꼬인 것이므로 수동 파싱 시도
+        all_vals = sheet.get_all_values()
+        if len(all_vals) <= 1: return {}
+        return {"에러 복구 중...": {"text": "시트 헤더를 Title, Text, Date로 맞춰주세요.", "date": ""}}
 
 def save_to_library(title, text):
     sheet = get_gsheet()
     if not sheet: return
-    records = sheet.get_all_records()
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    try:
+        records = sheet.get_all_records()
+        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    row_idx = None
-    for i, row in enumerate(records):
-        if str(row.get('Title')) == str(title):
-            row_idx = i + 2 
-            break
+        row_idx = None
+        for i, row in enumerate(records):
+            real_keys = {k.lower(): k for k in row.keys()}
+            t_key = real_keys.get('title')
+            if t_key and str(row.get(t_key)) == str(title):
+                row_idx = i + 2 
+                break
 
-    if row_idx:
-        sheet.update_cell(row_idx, 2, text)
-        sheet.update_cell(row_idx, 3, date_str)
-    else:
-        sheet.append_row([title, text, date_str])
+        if row_idx:
+            # 기존 행 업데이트 (열 번호는 1:Title, 2:Text, 3:Date 기준)
+            sheet.update_cell(row_idx, 2, text)
+            sheet.update_cell(row_idx, 3, date_str)
+        else:
+            sheet.append_row([title, text, date_str])
+    except:
+        # 안전하게 새로 추가
+        sheet.append_row([title, text, datetime.now().strftime("%Y-%m-%d %H:%M")])
 
 def delete_from_library(title):
     sheet = get_gsheet()
     if not sheet: return
-    records = sheet.get_all_records()
-    for i, row in enumerate(records):
-        if str(row.get('Title')) == str(title):
-            sheet.delete_rows(i + 2)
-            break
+    try:
+        records = sheet.get_all_records()
+        for i, row in enumerate(records):
+            real_keys = {k.lower(): k for k in row.keys()}
+            t_key = real_keys.get('title')
+            if t_key and str(row.get(t_key)) == str(title):
+                sheet.delete_rows(i + 2)
+                break
+    except:
+        pass
 
 # ============================================================
 # [2] 하이브리드 멀티 AI 엔진
@@ -309,15 +342,14 @@ with st.sidebar:
     
     st.divider()
     
-    # 🚨 [추가됨] 언제든 최신 서재 목록을 땡겨올 수 있는 새로고침 버튼 추가
     col_db1, col_db2 = st.columns([3, 1])
     with col_db1:
-        st.header("📚 나만의 서재 (DB)")
+        st.header("📚 나만의 서재")
     with col_db2:
         if st.button("🔄"):
             st.rerun()
 
-    with st.spinner("구글 시트에서 서재를 불러오는 중..."):
+    with st.spinner("서재를 불러오는 중..."):
         library = load_library()
         
     if library:
@@ -336,15 +368,15 @@ with st.sidebar:
             if st.button("🗑️ 삭제", use_container_width=True) and selected_doc != "선택하세요":
                 delete_from_library(selected_doc)
                 st.success("삭제되었습니다!")
-                time.sleep(1) # 지운 후 1초 대기
+                time.sleep(1)
                 st.rerun()
     else:
-        st.info("아직 저장된 문서가 없습니다.")
+        st.info("저장된 문서가 없거나 이름표가 다릅니다.")
 
 tutor = MultiAIEngine(selected_engine)
 
 st.title(f"🎓 AI 영어 마스터")
-st.caption(f"🚀 현재 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **구글 시트 연동 됨**")
+st.caption(f"🚀 현재 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **연결 완료**")
 
 tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
@@ -379,7 +411,6 @@ with tabs[0]:
                         with st.spinner("클라우드에 안전하게 저장 중..."):
                             save_to_library(doc_title, temp_text)
                         
-                        # 🚨 [추가됨] 화면에 저장 성공 알림을 띄우고 사람이 읽을 수 있게 1.5초 기다려줍니다!
                         st.success(f"🎉 '{doc_title}' 문서가 안전하게 저장되었습니다!")
                         time.sleep(1.5)
                         st.rerun()
@@ -426,15 +457,8 @@ with tabs[0]:
                 on_select="rerun", 
                 selection_mode="single-row"
             )
-        except TypeError:
-            selection = st.dataframe(
-                df, 
-                hide_index=False,
-                column_config=df_config,
-                use_container_width=True,
-                on_select="rerun", 
-                selection_mode="single-row"
-            )
+        except:
+            selection = st.dataframe(df, hide_index=False, column_config=df_config, use_container_width=True, on_select="rerun", selection_mode="single-row")
 
         col_prev, col_info, col_next = st.columns([1, 2, 1])
         with col_prev:
