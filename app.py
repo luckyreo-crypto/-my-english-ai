@@ -19,9 +19,28 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ============================================================
-# 🚨 화면 설정
+# 🚨 화면 및 CSS 설정 (호버 기능 초강화 디자인 주입)
 # ============================================================
 st.set_page_config(page_title="AI 영어 마스터", page_icon="🎓", layout="wide")
+
+st.markdown("""
+<style>
+/* 마우스 호버 영단어 디자인 */
+.hover-word {
+    cursor: help;
+    border-bottom: 2px dotted #007bff;
+    color: #0056b3;
+    padding: 0 4px;
+    transition: all 0.2s ease-in-out;
+}
+.hover-word:hover {
+    background-color: #e6f2ff;
+    border-radius: 4px;
+    font-weight: bold;
+    color: #003d82;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ============================================================
 # 🔐 보안 및 설정
@@ -54,7 +73,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (DB 연동)
+# [1] 데이터 관리 엔진
 # ============================================================
 def get_gsheet():
     try:
@@ -84,7 +103,6 @@ def get_gsheet():
 def load_library():
     sheet = get_gsheet()
     if not sheet: return {}
-    
     try:
         records = sheet.get_all_records()
         library = {}
@@ -105,14 +123,11 @@ def load_library():
                 }
         return library
     except Exception as e:
-        all_vals = sheet.get_all_values()
-        if len(all_vals) <= 1: return {}
-        return {"에러 복구 중...": {"text": "시트 헤더를 Title, Text, Date로 맞춰주세요.", "date": ""}}
+        return {}
 
 def save_to_library(title, text):
     sheet = get_gsheet()
     if not sheet: return
-    
     try:
         records = sheet.get_all_records()
         date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -178,7 +193,8 @@ class MultiAIEngine:
     def bulk_translate(self, sentences):
         if not sentences: return []
         dict_sentences = {str(i): s for i, s in enumerate(sentences)}
-        prompt = f"당신은 번역기입니다. 아래 JSON의 번호를 유지하며 영어 문장을 한국어로 번역해 순수 JSON으로 답하세요.\n{json.dumps(dict_sentences)}"
+        # 번역 양이 20개로 늘어났으므로 군더더기 없는 순수 JSON만 요구
+        prompt = f"당신은 번역기입니다. 아래 JSON의 번호를 유지하며 영어 문장을 한국어로 번역해 순수 JSON으로만 답하세요.(다른 설명 절대 금지)\n{json.dumps(dict_sentences)}"
         
         raw_text = self._call_ai(prompt)
         if "🚨" in raw_text: return [raw_text] * len(sentences)
@@ -197,18 +213,18 @@ class MultiAIEngine:
         prompt = f"""
         당신은 대한민국 최고의 영어 일타 강사입니다. 아래 문장을 깊이 있게 분석하여 반드시 순수 JSON으로만 응답하세요.
         {{
-            "grammar": "문장의 구조와 핵심 문법 설명 (반드시 하나의 문자열 String으로 작성할 것. dict 사용 절대 금지)",
+            "grammar": "문장의 구조와 핵심 문법 설명 (반드시 하나의 문자열 String으로 작성)",
             "examples": [
                 "1. 영어문장 - 한글해석",
                 "2. 영어문장 - 한글해석"
             ],
             "background": {{
-                "translation": "자연스러운 우리말 해석 (단일 문자열)",
-                "pronunciation": "원어민 발음 한글 표기 (단일 문자열)",
-                "words": "핵심 단어/숙어와 뜻 (단일 문자열로 작성할 것. dict 사용 금지)",
-                "context": "배경/뉘앙스 설명 (단일 문자열)"
+                "translation": "자연스러운 우리말 해석",
+                "pronunciation": "실제 원어민의 연음(Linking)과 억양을 100% 반영한 아주 디테일하고 찰진 한글 발음 표기 (예: 'Check it out' -> '체끼라웃', 'want to' -> '워너', 'water' -> '워러'). 로봇처럼 또박또박 끊어 읽지 마세요.",
+                "words": "핵심 단어/숙어와 뜻",
+                "context": "배경/뉘앙스 설명"
             }},
-            "hover_html": "입력된 영어 문장의 '모든 단어'를 하나씩 쪼개서, <span title='단어의 한글 뜻' style='cursor:help; border-bottom:1px dashed #ccc; color:#0056b3; font-weight:bold;'>단어</span> 형태로 감싸서 만든 전체 문장 HTML 문자열."
+            "hover_html": "입력된 영어 문장의 '모든 개별 영단어'를 반드시 <span class='hover-word' title='뜻 [원어민 발음]'>단어</span> 형태로 감싸서 만든 전체 문장 HTML. 마우스를 올렸을 때 뜻과 찰진 발음이 풍부하게 나오게 할 것."
         }}
         문장: "{text}"
         """
@@ -225,7 +241,7 @@ class MultiAIEngine:
     def get_pattern_study(self, pattern_text):
         prompt = f"""
         패턴 '{pattern_text}'에 대한 설명과 예문 10개를 순수 JSON으로 작성하세요.
-        {{"explanation": "패턴 설명", "examples": ["1. 영어 - 해석", "2. 영어 - 해석", "3. 영어 - 해석", "4. 영어 - 해석", "5. 영어 - 해석", "6. 영어 - 해석", "7. 영어 - 해석", "8. 영어 - 해석", "9. 영어 - 해석", "10. 영어 - 해석"]}}
+        {{"explanation": "패턴 설명", "examples": ["1. 영어 - 해석", "2. 영어 - 해석"]}}
         """
         raw_text = self._call_ai(prompt)
         if "🚨" in raw_text: return {"explanation": raw_text, "examples": []}
@@ -257,7 +273,7 @@ class MultiAIEngine:
             return [s.strip() for s in sentences if len(s.strip()) > 5]
 
 # ============================================================
-# [3] 150 핵심 패턴 데이터
+# [3] 150 핵심 패턴 데이터 (생략 없이 로드)
 # ============================================================
 @st.cache_data
 def get_unique_150_patterns():
@@ -324,23 +340,15 @@ if 'current_text' not in st.session_state: st.session_state.current_text = ""
 if 'current_page' not in st.session_state: st.session_state.current_page = 0
 if 'page_translations' not in st.session_state: st.session_state.page_translations = {}
 
-# 🗂️ 사이드바
 with st.sidebar:
     st.header("⚙️ AI 엔진 선택")
     st.write("메인 엔진이 막히면 초고속 모델로 교체하세요!")
-    selected_engine = st.radio(
-        "사용할 무료 AI 모델:", 
-        ["Llama 3.1 (메타/초고속 무료)", "Gemini 2.5 (구글/무료)"]
-    )
-    
+    selected_engine = st.radio("사용할 무료 AI 모델:", ["Llama 3.1 (메타/초고속 무료)", "Gemini 2.5 (구글/무료)"])
     st.divider()
-    
     col_db1, col_db2 = st.columns([3, 1])
-    with col_db1:
-        st.header("📚 나만의 서재")
-    with col_db2:
-        if st.button("🔄"):
-            st.rerun()
+    with col_db1: st.header("📚 나만의 서재")
+    with col_db2: 
+        if st.button("🔄"): st.rerun()
 
     with st.spinner("서재를 불러오는 중..."):
         library = load_library()
@@ -364,7 +372,7 @@ with st.sidebar:
                 time.sleep(1)
                 st.rerun()
     else:
-        st.info("저장된 문서가 없거나 이름표가 다릅니다.")
+        st.info("저장된 문서가 없습니다.")
 
 tutor = MultiAIEngine(selected_engine)
 
@@ -376,7 +384,6 @@ tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 
 with tabs[0]:
     st.subheader("새 문서 업로드 및 분석")
     mode = st.radio("입력 방식", ["파일 첨부", "텍스트 직접 입력"], horizontal=True)
-    
     temp_text = ""
     if mode == "파일 첨부":
         file = st.file_uploader("파일을 올려주세요 (PDF, DOCX)", type=["pdf", "docx"])
@@ -385,14 +392,7 @@ with tabs[0]:
         temp_text = st.text_area("영어 문장이나 대본을 붙여넣으세요", height=100)
 
     st.write("---")
-    split_mode = st.radio(
-        "✂️ 문장 나누기 기준 선택", 
-        [
-            "📝 마침표(.) 기준 (소설, 기사처럼 줄바꿈 없이 이어진 글에 적합)", 
-            "↵ 줄바꿈(Enter) 기준 (대본, 자막, 가사처럼 한 줄이 한 문장일 때 적합)"
-        ], 
-        horizontal=False
-    )
+    split_mode = st.radio("✂️ 문장 나누기 기준 선택", ["📝 마침표(.) 기준 (소설, 기사처럼 이어진 글)", "↵ 줄바꿈(Enter) 기준 (대본, 자막처럼 한 줄이 한 문장일 때)"], horizontal=False)
 
     if temp_text:
         col_apply, col_save, _ = st.columns([2, 2, 6])
@@ -410,8 +410,7 @@ with tabs[0]:
                     if doc_title:
                         with st.spinner("클라우드에 안전하게 저장 중..."):
                             save_to_library(doc_title, temp_text)
-                        
-                        st.success(f"🎉 '{doc_title}' 문서가 안전하게 저장되었습니다!")
+                        st.success(f"🎉 '{doc_title}' 문서 저장 완료!")
                         time.sleep(1.5)
                         st.rerun()
                     else:
@@ -420,7 +419,8 @@ with tabs[0]:
     st.divider()
 
     if st.session_state.all_sentences:
-        page_size = 10
+        # 🚨 [개선 1] 한 페이지에 20개씩 노출
+        page_size = 20
         total_pages = math.ceil(len(st.session_state.all_sentences) / page_size)
         current_page = st.session_state.current_page
         start_idx = current_page * page_size
@@ -428,7 +428,7 @@ with tabs[0]:
         current_chunk = st.session_state.all_sentences[start_idx:end_idx]
 
         if current_page not in st.session_state.page_translations:
-            with st.spinner(f"번역 중입니다..."):
+            with st.spinner(f"번역 중입니다... (20문장이라 1~2초 더 소요될 수 있습니다)"):
                 st.session_state.page_translations[current_page] = tutor.bulk_translate(current_chunk)
         
         translations = st.session_state.page_translations[current_page]
@@ -440,9 +440,21 @@ with tabs[0]:
         })
         df.set_index("No.", inplace=True)
         
-        # 🚨 [추가됨] 줄 간격(행 높이) 수동 조절 슬라이더!
-        st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 분석이 나옵니다)")
-        row_h = st.slider("↕️ 리스트 줄 간격(높이) 조절", min_value=40, max_value=150, value=60, step=10, help="긴 문장이 잘리면 오른쪽으로 바를 밀어 간격을 늘려보세요!")
+        st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 심층 리포트가 나옵니다)")
+        
+        # 🚨 [개선 2] 줄 간격 자동/수동 하이브리드 제어 로직
+        max_len = max([len(s) for s in current_chunk] + [0])
+        auto_height = max(40, (max_len // 50 + 1) * 40) # 글자 수에 비례한 자동 높이 계산
+
+        col_auto, col_slider = st.columns([1, 3])
+        with col_auto:
+            is_auto = st.checkbox("✨ 줄 간격 자동 맞춤", value=True)
+        with col_slider:
+            if is_auto:
+                row_h = auto_height
+                st.caption(f"*(현재 화면에 맞춰 높이가 {row_h}px로 자동 조정되었습니다)*")
+            else:
+                row_h = st.slider("↕️ 수동 높이 조절", 40, 200, auto_height, 10, label_visibility="collapsed")
         
         df_config = {
             "English (원문)": st.column_config.TextColumn(width="large"),
@@ -450,15 +462,7 @@ with tabs[0]:
         }
 
         try:
-            selection = st.dataframe(
-                df, 
-                hide_index=False,
-                column_config=df_config,
-                use_container_width=True,
-                row_height=row_h,  # 슬라이더 값 연동
-                on_select="rerun", 
-                selection_mode="single-row"
-            )
+            selection = st.dataframe(df, hide_index=False, column_config=df_config, use_container_width=True, row_height=row_h, on_select="rerun", selection_mode="single-row")
         except:
             selection = st.dataframe(df, hide_index=False, column_config=df_config, use_container_width=True, on_select="rerun", selection_mode="single-row")
 
@@ -483,7 +487,7 @@ with tabs[0]:
             with st.spinner(f"초고속 상세 분석 및 단어 번역 생성 중..."):
                 analysis = tutor.deep_analyze(target_s)
                 
-                # 🚨 [렌더링 안전화 로직] AI가 어떤 괴상한 딕셔너리({ })를 줘도 강제로 예쁜 마크다운으로 변환!
+                # 딕셔너리 안전 변환 함수
                 def safe_parse(data):
                     if isinstance(data, dict):
                         res = []
@@ -491,39 +495,29 @@ with tabs[0]:
                             if isinstance(v, list):
                                 v_str = ", ".join([str(i.get('단어', i.get('숙어', i))) + (f"({i.get('뜻', '')})" if isinstance(i, dict) and '뜻' in i else "") for i in v])
                                 res.append(f"**[{k}]** {v_str}")
-                            elif isinstance(v, dict):
-                                res.append(f"**[{k}]** {safe_parse(v)}")
-                            else:
-                                res.append(f"**[{k}]** {v}")
+                            elif isinstance(v, dict): res.append(f"**[{k}]** {safe_parse(v)}")
+                            else: res.append(f"**[{k}]** {v}")
                         return "\n\n".join(res)
-                    elif isinstance(data, list):
-                        return "\n".join([f"- {safe_parse(x)}" for x in data])
+                    elif isinstance(data, list): return "\n".join([f"- {safe_parse(x)}" for x in data])
                     return str(data)
 
-                # 1. 문법 변환
-                grammar_data = analysis.get('grammar', '정보 없음')
-                grammar_str = safe_parse(grammar_data)
-
-                # 2. 예문 변환 (list of dicts 방어)
+                grammar_str = safe_parse(analysis.get('grammar', '정보 없음'))
                 ex_list = []
                 for ex in analysis.get('examples', []):
-                    if isinstance(ex, dict):
-                        ex_list.append(" - ".join(str(v) for v in ex.values()))
-                    else:
-                        ex_list.append(str(ex))
+                    if isinstance(ex, dict): ex_list.append(" - ".join(str(v) for v in ex.values()))
+                    else: ex_list.append(str(ex))
                 examples_text = "\n\n".join([f"- {x}" for x in ex_list])
 
-                # 3. 백그라운드 추출
                 bg = analysis.get('background', {})
                 trans_str = safe_parse(bg.get('translation', '정보 없음'))
                 pronun_str = safe_parse(bg.get('pronunciation', '정보 없음'))
                 words_str = safe_parse(bg.get('words', '정보 없음'))
                 context_str = safe_parse(bg.get('context', '정보 없음'))
 
-                # 화면 출력부
-                st.info("💡 **스마트 번역:** 아래 영단어 위에 마우스 커서를 올려보세요!")
+                # 🚨 [개선 3 & 4] 마우스 호버 강력 디자인 출력 & 원어민 발음 반영
+                st.info("🖱️ **스마트 번역:** 아래 영단어 위에 마우스를 슥~ 올려보세요! 숨겨진 뜻과 발음이 나옵니다.")
                 hover_html = analysis.get('hover_html', target_s)
-                st.markdown(f"<div style='font-size: 1.2em; line-height: 1.8; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 10px;'>{hover_html}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size: 1.4em; line-height: 2.0; margin-bottom: 20px; padding: 20px; background-color: #f8f9fa; border-radius: 10px; border-left: 5px solid #007bff; box-shadow: 2px 2px 10px rgba(0,0,0,0.1);'>{hover_html}</div>", unsafe_allow_html=True)
                 
                 c1, c2, c3 = st.columns(3)
                 c1.success(f"📐 **문법 & 형식 상세 강의**\n\n{grammar_str}")
@@ -538,23 +532,17 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("🚀 150 핵심 패턴 정복")
     all_patterns = get_unique_150_patterns()
-    
-    with st.container(height=350):
-        selected_p = st.radio("패턴 리스트", all_patterns, label_visibility="collapsed")
-    
+    with st.container(height=350): selected_p = st.radio("패턴 리스트", all_patterns, label_visibility="collapsed")
     if st.button("이 패턴 집중 공략하기 🚀"):
         with st.spinner(f"맞춤 예문을 생성 중입니다..."):
-            p_data = tutor.get_pattern_study(selected_p)
-            st.session_state.p_study = p_data
+            st.session_state.p_study = tutor.get_pattern_study(selected_p)
             st.session_state.p_title = selected_p
 
     if 'p_study' in st.session_state:
         st.markdown(f"### 💡 {st.session_state.p_title}")
         st.info(st.session_state.p_study.get("explanation", "설명 데이터를 불러오지 못했습니다."))
         st.write("#### ✍️ 실전 예문 10선")
-        for ex in st.session_state.p_study.get("examples", []):
-            st.write(f"- {ex}")
-        
+        for ex in st.session_state.p_study.get("examples", []): st.write(f"- {ex}")
         st.divider()
         if st.checkbox("✅ 오늘 이 패턴 마스터!"):
             st.balloons()
@@ -564,7 +552,5 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader("📅 나의 학습 히스토리")
-    if st.session_state.study_log:
-        st.table(pd.DataFrame(st.session_state.study_log).sort_values("날짜", ascending=False))
-    else:
-        st.write("아직 학습 기록이 없습니다.")
+    if st.session_state.study_log: st.table(pd.DataFrame(st.session_state.study_log).sort_values("날짜", ascending=False))
+    else: st.write("아직 학습 기록이 없습니다.")
