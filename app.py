@@ -11,6 +11,10 @@ from datetime import datetime
 import math
 from groq import Groq
 
+# 🚨 구글 스프레드시트 DB용 라이브러리
+import gspread
+from google.oauth2.service_account import Credentials
+
 # ============================================================
 # 🚨 화면 설정
 # ============================================================
@@ -23,11 +27,11 @@ try:
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
     GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
     GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+    GSHEET_URL = st.secrets["GSHEET_URL"]
+    GCP_SA_JSON = st.secrets["GCP_SA_JSON"]
 except:
     st.error("🚨 보안 설정(Secrets)이 완료되지 않았습니다.")
     st.stop()
-
-DB_FILE = "my_english_docs.json"
 
 # ============================================================
 # [로그인 시스템]
@@ -47,26 +51,63 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진
+# [1] 데이터 관리 엔진 (🌟 구글 스프레드시트 DB 연동 완료 🌟)
 # ============================================================
-def load_library():
-    if not os.path.exists(DB_FILE): return {}
+def get_gsheet():
+    """구글 시트와 연결하는 마스터 함수"""
     try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            content = f.read()
-            return json.loads(content) if content else {}
-    except: return {}
+        scope = ['https://www.googleapis.com/auth/spreadsheets']
+        creds_dict = json.loads(GCP_SA_JSON)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_url(GSHEET_URL).sheet1
+        return sheet
+    except Exception as e:
+        st.error(f"🚨 DB 연결 에러: {e}")
+        return None
+
+def load_library():
+    """DB에서 데이터 불러오기"""
+    sheet = get_gsheet()
+    if not sheet: return {}
+    records = sheet.get_all_records()
+    library = {}
+    for row in records:
+        if row.get('Title'):
+            library[str(row['Title'])] = {
+                "text": str(row.get('Text', '')), 
+                "date": str(row.get('Date', ''))
+            }
+    return library
 
 def save_to_library(title, text):
-    data = load_library()
-    data[title] = {"text": text, "date": datetime.now().strftime("%Y-%m-%d %H:%M")}
-    with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
+    """DB에 데이터 저장하기 (덮어쓰기 지원)"""
+    sheet = get_gsheet()
+    if not sheet: return
+    records = sheet.get_all_records()
+    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    row_idx = None
+    for i, row in enumerate(records):
+        if str(row.get('Title')) == str(title):
+            row_idx = i + 2 # 헤더가 1번줄이므로 +2
+            break
+
+    if row_idx:
+        sheet.update_cell(row_idx, 2, text)
+        sheet.update_cell(row_idx, 3, date_str)
+    else:
+        sheet.append_row([title, text, date_str])
 
 def delete_from_library(title):
-    data = load_library()
-    if title in data:
-        del data[title]
-        with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
+    """DB에서 데이터 삭제하기"""
+    sheet = get_gsheet()
+    if not sheet: return
+    records = sheet.get_all_records()
+    for i, row in enumerate(records):
+        if str(row.get('Title')) == str(title):
+            sheet.delete_rows(i + 2)
+            break
 
 # ============================================================
 # [2] 하이브리드 멀티 AI 엔진
@@ -249,10 +290,11 @@ with st.sidebar:
     )
     
     st.divider()
-    st.header("📚 나만의 서재")
-    library = load_library()
+    st.header("📚 나만의 서재 (DB)")
+    with st.spinner("구글 시트에서 서재를 불러오는 중..."):
+        library = load_library()
+        
     if library:
-        # 🚨 [수정 3] 서재의 문서 목록을 무조건 가나다/ABC 순으로 정렬합니다!
         saved_titles = sorted(list(library.keys()))
         selected_doc = st.selectbox("저장된 문서 목록", ["선택하세요"] + saved_titles)
         
@@ -275,7 +317,7 @@ with st.sidebar:
 tutor = MultiAIEngine(selected_engine)
 
 st.title(f"🎓 AI 영어 마스터")
-st.caption(f"🚀 현재 작동 중인 엔진: **{selected_engine}**")
+st.caption(f"🚀 현재 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **구글 시트 연동 됨**")
 
 tabs = st.tabs(["🔍 스마트 문서 분석", "🧩 150 핵심 패턴", "📅 학습 일정 관리"])
 
@@ -303,11 +345,12 @@ with tabs[0]:
                 st.session_state.page_translations = {}
                 st.rerun()
         with col_save:
-            with st.popover("💾 서재에 저장하기"):
+            with st.popover("💾 구글 시트 DB에 저장"):
                 doc_title = st.text_input("문서 제목을 입력하세요:")
                 if st.button("저장 확정"):
                     if doc_title:
-                        save_to_library(doc_title, temp_text)
+                        with st.spinner("클라우드에 안전하게 저장 중..."):
+                            save_to_library(doc_title, temp_text)
                         st.success("저장 완료!")
                         st.rerun()
                     else:
@@ -334,7 +377,6 @@ with tabs[0]:
             "English (원문)": current_chunk,
             "Korean (직관적 해석)": translations[:len(current_chunk)]
         })
-        # 🚨 [수정 1] "No." 컬럼을 인덱스로 만들어서 여백 없이 가장 초슬림하게 핏(Fit) 되도록 설정
         df.set_index("No.", inplace=True)
         
         st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 분석이 나옵니다)")
@@ -344,19 +386,17 @@ with tabs[0]:
             "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
         }
 
-        # 🚨 [수정 2] 긴 문장이 아래로 자연스럽게 줄바꿈(Wrap) 되도록 row_height 옵션을 추가했습니다.
         try:
             selection = st.dataframe(
                 df, 
-                hide_index=False, # 인덱스를 살려서 초슬림 번호칸을 렌더링
+                hide_index=False,
                 column_config=df_config,
                 use_container_width=True,
-                row_height=90, # 행 높이를 늘려 글씨가 여러 줄로 줄바꿈되도록 공간 확보
+                row_height=90,
                 on_select="rerun", 
                 selection_mode="single-row"
             )
         except TypeError:
-            # 아주 약간 구버전 환경일 경우를 대비한 안전 장치
             selection = st.dataframe(
                 df, 
                 hide_index=False,
