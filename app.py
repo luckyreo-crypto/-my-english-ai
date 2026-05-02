@@ -197,19 +197,18 @@ class MultiAIEngine:
         prompt = f"""
         당신은 대한민국 최고의 영어 일타 강사입니다. 아래 문장을 깊이 있게 분석하여 반드시 순수 JSON으로만 응답하세요.
         {{
-            "grammar": "문장의 구조(1~5형식 중 무엇인지)와 핵심 문법 요소에 대한 아주 상세하고 친절한 설명",
+            "grammar": "문장의 구조와 핵심 문법 설명 (반드시 하나의 문자열 String으로 작성할 것. dict 사용 절대 금지)",
             "examples": [
-                "1. 예문 - 해석",
-                "2. 예문 - 해석",
-                "3. 예문 - 해석"
+                "1. 영어문장 - 한글해석",
+                "2. 영어문장 - 한글해석"
             ],
             "background": {{
-                "translation": "이 문장의 가장 자연스러운 우리말 해석 (의역 포함)",
-                "pronunciation": "원어민의 연음을 반영한 자연스러운 한글 발음 표기",
-                "words": "핵심 단어와 숙어 정리 (뜻 포함)",
-                "context": "이 문장이 쓰이는 문화적 배경이나 뉘앙스 설명"
+                "translation": "자연스러운 우리말 해석 (단일 문자열)",
+                "pronunciation": "원어민 발음 한글 표기 (단일 문자열)",
+                "words": "핵심 단어/숙어와 뜻 (단일 문자열로 작성할 것. dict 사용 금지)",
+                "context": "배경/뉘앙스 설명 (단일 문자열)"
             }},
-            "hover_html": "입력된 영어 문장의 '모든 단어'를 하나씩 쪼개서, <span title='단어의 한글 뜻' style='cursor:help; border-bottom:1px dashed #ccc; color:#0056b3; font-weight:bold;'>단어</span> 형태로 감싸서 만든 전체 문장 HTML 문자열. (마우스를 올리면 뜻이 보이게 하는 용도)"
+            "hover_html": "입력된 영어 문장의 '모든 단어'를 하나씩 쪼개서, <span title='단어의 한글 뜻' style='cursor:help; border-bottom:1px dashed #ccc; color:#0056b3; font-weight:bold;'>단어</span> 형태로 감싸서 만든 전체 문장 HTML 문자열."
         }}
         문장: "{text}"
         """
@@ -293,7 +292,7 @@ def get_unique_150_patterns():
         "When do you ~? (너는 언제 ~해?)", "When did you ~? (너 언제 ~했어?)", "When is a good time to ~? (~하기 언제가 좋아?)", 
         "Where do you ~? (너는 어디서 ~해?)", "Where did you ~? (너 어디서 ~했어?)", "Where can I ~? (어디서 ~할 수 있을까요?)", 
         "Who is ~? (누가 ~야?)", "Who do you ~? (너는 누구를 ~해?)", "Who wants to ~? (누가 ~하고 싶어?)", 
-        "Is it okay if ~? (~해도 괜찮까요?)", "Is there ~? (~가 있나요?)", "Is it possible to ~? (~하는 게 가능할까요?)", 
+        "Is it okay if ~? (~해도 괜찮을까요?)", "Is there ~? (~가 있나요?)", "Is it possible to ~? (~하는 게 가능할까요?)", 
         "It is ~ (그건 ~야)", "It is time to ~ (~할 시간이야)", "It looks like ~ (~인 것 같아 보여)", 
         "It seems that ~ (~인 모양이야)", "It takes ~ (~가 필요해/걸려)", "It doesn't matter ~ (~는 상관없어)", 
         "It's hard to ~ (~하기가 힘들어)", "It's worth ~ing (~할 가치가 있어)", "There is ~ (~가 있어)", 
@@ -386,7 +385,6 @@ with tabs[0]:
         temp_text = st.text_area("영어 문장이나 대본을 붙여넣으세요", height=100)
 
     st.write("---")
-    # 🚨 [수정됨] 사용자가 명확하게 이해할 수 있도록 라디오 버튼 설명 변경
     split_mode = st.radio(
         "✂️ 문장 나누기 기준 선택", 
         [
@@ -442,21 +440,22 @@ with tabs[0]:
         })
         df.set_index("No.", inplace=True)
         
+        # 🚨 [추가됨] 줄 간격(행 높이) 수동 조절 슬라이더!
         st.write("### 📖 병렬 학습 리스트 (줄을 클릭하면 분석이 나옵니다)")
+        row_h = st.slider("↕️ 리스트 줄 간격(높이) 조절", min_value=40, max_value=150, value=60, step=10, help="긴 문장이 잘리면 오른쪽으로 바를 밀어 간격을 늘려보세요!")
         
         df_config = {
             "English (원문)": st.column_config.TextColumn(width="large"),
             "Korean (직관적 해석)": st.column_config.TextColumn(width="large")
         }
 
-        # 🚨 [수정됨] 표 높이를 90에서 60으로 확 줄여서 컴팩트하게 만들었습니다!
         try:
             selection = st.dataframe(
                 df, 
                 hide_index=False,
                 column_config=df_config,
                 use_container_width=True,
-                row_height=60, 
+                row_height=row_h,  # 슬라이더 값 연동
                 on_select="rerun", 
                 selection_mode="single-row"
             )
@@ -484,23 +483,56 @@ with tabs[0]:
             with st.spinner(f"초고속 상세 분석 및 단어 번역 생성 중..."):
                 analysis = tutor.deep_analyze(target_s)
                 
-                # 🚨 [새로운 기능] 마우스 호버 영단어 번역 기능 출력!
+                # 🚨 [렌더링 안전화 로직] AI가 어떤 괴상한 딕셔너리({ })를 줘도 강제로 예쁜 마크다운으로 변환!
+                def safe_parse(data):
+                    if isinstance(data, dict):
+                        res = []
+                        for k, v in data.items():
+                            if isinstance(v, list):
+                                v_str = ", ".join([str(i.get('단어', i.get('숙어', i))) + (f"({i.get('뜻', '')})" if isinstance(i, dict) and '뜻' in i else "") for i in v])
+                                res.append(f"**[{k}]** {v_str}")
+                            elif isinstance(v, dict):
+                                res.append(f"**[{k}]** {safe_parse(v)}")
+                            else:
+                                res.append(f"**[{k}]** {v}")
+                        return "\n\n".join(res)
+                    elif isinstance(data, list):
+                        return "\n".join([f"- {safe_parse(x)}" for x in data])
+                    return str(data)
+
+                # 1. 문법 변환
+                grammar_data = analysis.get('grammar', '정보 없음')
+                grammar_str = safe_parse(grammar_data)
+
+                # 2. 예문 변환 (list of dicts 방어)
+                ex_list = []
+                for ex in analysis.get('examples', []):
+                    if isinstance(ex, dict):
+                        ex_list.append(" - ".join(str(v) for v in ex.values()))
+                    else:
+                        ex_list.append(str(ex))
+                examples_text = "\n\n".join([f"- {x}" for x in ex_list])
+
+                # 3. 백그라운드 추출
+                bg = analysis.get('background', {})
+                trans_str = safe_parse(bg.get('translation', '정보 없음'))
+                pronun_str = safe_parse(bg.get('pronunciation', '정보 없음'))
+                words_str = safe_parse(bg.get('words', '정보 없음'))
+                context_str = safe_parse(bg.get('context', '정보 없음'))
+
+                # 화면 출력부
                 st.info("💡 **스마트 번역:** 아래 영단어 위에 마우스 커서를 올려보세요!")
                 hover_html = analysis.get('hover_html', target_s)
                 st.markdown(f"<div style='font-size: 1.2em; line-height: 1.8; margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 10px;'>{hover_html}</div>", unsafe_allow_html=True)
                 
                 c1, c2, c3 = st.columns(3)
-                
-                c1.success(f"📐 **문법 & 형식 상세 강의**\n\n{analysis.get('grammar', '정보 없음')}")
-                
-                examples_text = "\n\n".join([f"- {ex}" for ex in analysis.get('examples', [])])
+                c1.success(f"📐 **문법 & 형식 상세 강의**\n\n{grammar_str}")
                 c2.warning(f"💡 **응용 실전 예시**\n\n{examples_text}")
                 
-                bg = analysis.get('background', {})
-                bg_text = f"🎯 **자연스러운 해석:**\n{bg.get('translation', '정보 없음')}\n\n" \
-                          f"🗣️ **원어민 발음:**\n{bg.get('pronunciation', '정보 없음')}\n\n" \
-                          f"📝 **단어/숙어:**\n{bg.get('words', '정보 없음')}\n\n" \
-                          f"🌍 **배경/뉘앙스:**\n{bg.get('context', '정보 없음')}"
+                bg_text = f"🎯 **자연스러운 해석:**\n{trans_str}\n\n" \
+                          f"🗣️ **원어민 발음:**\n{pronun_str}\n\n" \
+                          f"📝 **단어/숙어:**\n{words_str}\n\n" \
+                          f"🌍 **배경/뉘앙스:**\n{context_str}"
                 c3.error(f"🔍 **문장 심층 지식**\n\n{bg_text}")
 
 with tabs[1]:
