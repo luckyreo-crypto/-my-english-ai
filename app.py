@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import datetime
 import math
 from groq import Groq
-import textwrap # 🚨 [추가됨] 열쇠 재조립을 위한 파이썬 기본 부품
+import textwrap
 
 # 구글 스프레드시트 DB용 라이브러리
 import gspread
@@ -52,23 +52,28 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🌟 궁극의 에러 해결 코드 탑재 🌟)
+# [1] 데이터 관리 엔진 (🌟 궁극의 열쇠 정화 시스템 탑재 🌟)
 # ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
     try:
-        scope = ['https://www.googleapis.com/auth/spreadsheets']
-        creds_dict = json.loads(GCP_SA_JSON)
+        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds_dict = json.loads(GCP_SA_JSON, strict=False)
         
-        # 🚨 [궁극의 해결책] Streamlit이 찌그러뜨린 열쇠를 분해해서 완벽하게 재조립합니다!
+        # 1. 꼬여있는 암호키 원본을 가져옵니다.
         raw_key = creds_dict.get("private_key", "")
-        # 1. 꼬여있는 머리(Header)와 꼬리(Footer)를 잘라냅니다.
+        
+        # 2. 위아래 머리(Header)와 꼬리(Footer) 껍데기를 잠시 떼어냅니다.
         key_body = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
-        # 2. 스트림릿이 섞어놓은 모든 공백과 줄바꿈 불순물을 완전히 제거합니다.
-        key_body = key_body.replace("\\n", "").replace("\n", "").replace(" ", "").replace('"', '')
-        # 3. 구글 암호키 표준 규격인 '64글자'씩 예쁘게 다시 자릅니다.
-        formatted_body = "\n".join(textwrap.wrap(key_body, 64))
-        # 4. 머리와 꼬리를 정상적인 줄바꿈과 함께 다시 붙여줍니다. (완벽한 복구!)
+        
+        # 3. 🚨 [절대 무적의 불순물 제거기] 정규식을 사용해 오직 'Base64 암호 규격(A-Z, a-z, 0-9, +, /, =)'만 남기고,
+        # 에러를 일으킨 마침표(.), 띄어쓰기, 줄바꿈 기호 등 모든 쓰레기 데이터를 가차 없이 삭제합니다!
+        clean_body = re.sub(r'[^A-Za-z0-9+/=]', '', key_body)
+        
+        # 4. 불순물이 100% 제거된 깨끗한 암호문을 다시 64글자씩 예쁘게 포장합니다.
+        formatted_body = "\n".join(textwrap.wrap(clean_body, 64))
+        
+        # 5. 머리와 꼬리를 정상적인 줄바꿈과 함께 다시 붙여 완벽한 열쇠로 부활시킵니다.
         perfect_key = f"-----BEGIN PRIVATE KEY-----\n{formatted_body}\n-----END PRIVATE KEY-----\n"
         
         creds_dict["private_key"] = perfect_key
@@ -82,7 +87,6 @@ def get_gsheet():
         return None
 
 def load_library():
-    """DB에서 데이터 불러오기"""
     sheet = get_gsheet()
     if not sheet: return {}
     records = sheet.get_all_records()
@@ -96,7 +100,6 @@ def load_library():
     return library
 
 def save_to_library(title, text):
-    """DB에 데이터 저장하기 (덮어쓰기 지원)"""
     sheet = get_gsheet()
     if not sheet: return
     records = sheet.get_all_records()
@@ -105,7 +108,7 @@ def save_to_library(title, text):
     row_idx = None
     for i, row in enumerate(records):
         if str(row.get('Title')) == str(title):
-            row_idx = i + 2 # 헤더가 1번줄이므로 +2
+            row_idx = i + 2 
             break
 
     if row_idx:
@@ -115,7 +118,6 @@ def save_to_library(title, text):
         sheet.append_row([title, text, date_str])
 
 def delete_from_library(title):
-    """DB에서 데이터 삭제하기"""
     sheet = get_gsheet()
     if not sheet: return
     records = sheet.get_all_records()
