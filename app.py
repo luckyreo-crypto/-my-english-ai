@@ -10,8 +10,9 @@ import pandas as pd
 from datetime import datetime
 import math
 from groq import Groq
+import textwrap # 🚨 [추가됨] 열쇠 재조립을 위한 파이썬 기본 부품
 
-# 🚨 구글 스프레드시트 DB용 라이브러리
+# 구글 스프레드시트 DB용 라이브러리
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -51,7 +52,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ============================================================
-# [1] 데이터 관리 엔진 (🌟 구글 스프레드시트 DB 연동 완료 🌟)
+# [1] 데이터 관리 엔진 (🌟 궁극의 에러 해결 코드 탑재 🌟)
 # ============================================================
 def get_gsheet():
     """구글 시트와 연결하는 마스터 함수"""
@@ -59,8 +60,18 @@ def get_gsheet():
         scope = ['https://www.googleapis.com/auth/spreadsheets']
         creds_dict = json.loads(GCP_SA_JSON)
         
-        # 🚨 [최종 해결책] 꼬여있는 줄바꿈 기호를 파이썬이 읽을 수 있게 강제로 펴줍니다!
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        # 🚨 [궁극의 해결책] Streamlit이 찌그러뜨린 열쇠를 분해해서 완벽하게 재조립합니다!
+        raw_key = creds_dict.get("private_key", "")
+        # 1. 꼬여있는 머리(Header)와 꼬리(Footer)를 잘라냅니다.
+        key_body = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+        # 2. 스트림릿이 섞어놓은 모든 공백과 줄바꿈 불순물을 완전히 제거합니다.
+        key_body = key_body.replace("\\n", "").replace("\n", "").replace(" ", "").replace('"', '')
+        # 3. 구글 암호키 표준 규격인 '64글자'씩 예쁘게 다시 자릅니다.
+        formatted_body = "\n".join(textwrap.wrap(key_body, 64))
+        # 4. 머리와 꼬리를 정상적인 줄바꿈과 함께 다시 붙여줍니다. (완벽한 복구!)
+        perfect_key = f"-----BEGIN PRIVATE KEY-----\n{formatted_body}\n-----END PRIVATE KEY-----\n"
+        
+        creds_dict["private_key"] = perfect_key
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
