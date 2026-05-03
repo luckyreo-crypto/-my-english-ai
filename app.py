@@ -12,6 +12,8 @@ import math
 from groq import Groq
 import traceback
 import time
+import urllib.request
+import xml.etree.ElementTree as ET
 
 # 구글 스프레드시트 DB용 라이브러리
 import gspread
@@ -56,7 +58,6 @@ st.markdown("""
     border-radius: 5px;
     margin-bottom: 15px;
 }
-/* 추가된 뉴스 카드 CSS */
 .news-card {
     background-color: #ffffff;
     border-left: 4px solid #ff4b4b;
@@ -85,7 +86,7 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🔒 나만의 영어 서재 (보안 접속)")
+    st.title("🔒 나만의 지식 서재 (보안 접속)")
     pwd = st.text_input("접속 비밀번호를 입력하세요:", type="password")
     if st.button("접속하기"):
         if pwd == str(APP_PASSWORD):
@@ -239,7 +240,7 @@ class MultiAIEngine:
         """
         return extract_safe_json(self._call_ai(prompt, expect_json=True))
 
-    # [신규 추가] 2. 사자성어 (한자 훈음 정확도 강화, 거짓 방지)
+    # [신규 추가] 2. 사자성어 (한자 훈음 정확도 강화)
     def get_idiom_story(self, exclude_list):
         prompt = f"""
         당신은 역사와 고전에 정통한 학자입니다. 실존하는 정확한 사자성어를 하나 선정하세요.
@@ -257,27 +258,48 @@ class MultiAIEngine:
         """
         return extract_safe_json(self._call_ai(prompt, expect_json=True))
 
-    # [신규 추가] 3. 어제자 뉴스 (상상 금지, 실제 채널 기반)
+    # [신규 업데이트] 3. 실시간 뉴스 (파이썬 RSS 크롤링 -> AI 요약)
     def get_realtime_news(self):
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y년 %m월 %d일")
-        prompt = f"""
-        당신은 팩트 체커이자 뉴스 큐레이터입니다. {yesterday} 기준으로 대한민국이나 전 세계에서 실제로 보도된 주요 뉴스 TOP 10을 정리하세요.
-        절대 상상하거나 지어내지 마세요. KBS, MBC, SBS, YTN 등 실제 언론사에서 보도된 내용만 다루세요.
-        반드시 JSON 형식으로만 응답하세요.
-        {{
-            "date": "{yesterday}",
-            "news": [
-                {{"title": "뉴스 제목", "channel": "보도 매체 이름", "summary": "기사 1줄 요약"}}
-            ]
-        }}
-        """
-        return extract_safe_json(self._call_ai(prompt, expect_json=True))
+        try:
+            # 1단계: 파이썬으로 실제 구글 뉴스 한국어 RSS 수집
+            url = "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            xml_data = urllib.request.urlopen(req).read()
+            root = ET.fromstring(xml_data)
+            
+            live_news = []
+            for item in root.findall('./channel/item')[:15]:
+                title = item.find('title').text
+                live_news.append(title)
+            
+            news_text = "\n".join(live_news)
+            
+            # 2단계: AI에게 이 진짜 데이터를 던져주고 요약 강제
+            prompt = f"""
+            당신은 팩트 체커이자 뉴스 큐레이터입니다. 아래 텍스트는 방금 수집한 '오늘의 실제 뉴스 기사 제목들'입니다.
+            이 실제 데이터를 바탕으로 가장 중요해 보이는 핵심 뉴스 10개를 골라 요약해 주세요.
+            [절대 주의]: 제공된 뉴스 데이터 외에는 단 한 글자도 지어내거나 상상하지 마세요.
 
-    # (이하 기존 영어 분석 함수들 그대로 유지)
+            [실제 뉴스 데이터]
+            {news_text}
+
+            반드시 JSON 형식으로만 응답하세요.
+            {{
+                "date": "오늘의 주요 보도 뉴스",
+                "news": [
+                    {{"title": "뉴스 핵심 제목", "channel": "종합 언론", "summary": "기사의 핵심 내용을 1줄로 유추하여 요약"}}
+                ]
+            }}
+            """
+            return extract_safe_json(self._call_ai(prompt, expect_json=True))
+            
+        except Exception as e:
+            return {"date": "뉴스 로딩 실패", "news": [{"title": "뉴스 수집 에러", "channel": "시스템", "summary": f"오류 발생: {str(e)}"}]}
+
+    # (이하 기존 영어 분석 함수들 완벽 유지)
     def bulk_translate(self, sentences):
         if not sentences: return []
         
-        # 🚨 [패치 3 & 4] 줄 어긋남 방지 JSON Array 강제 매커니즘 & 영어 역류 금지
         prompt = f"""
         당신은 넷플릭스 전문 번역가입니다. 제공된 텍스트를 문맥에 맞게 가장 자연스러운 한국어 구어체로 번역하세요.
         
@@ -309,7 +331,6 @@ class MultiAIEngine:
             for i in range(len(sentences)):
                 if i < len(trans_list):
                     val = str(trans_list[i]).replace("\n", " ").strip()
-                    # 🚨 영어 섞임(역류) 필터링
                     eng_chars = len(re.findall(r'[a-zA-Z]', val))
                     kor_chars = len(re.findall(r'[가-힣]', val))
                     if eng_chars > kor_chars * 2 and kor_chars < 3:
@@ -323,7 +344,6 @@ class MultiAIEngine:
         return ["파싱 실패 (형식 오류)"] * len(sentences)
 
     def deep_analyze(self, text):
-        # 🚨 [패치 5] JSON 디코딩 에러 방지 - AI에게 HTML 작성 금지!
         prompt = f"""
         당신은 미드 전문 영어 강사입니다. 아래 대사를 분석하여 순수 "JSON object" 형식으로만 응답하세요.
         {{
@@ -367,16 +387,12 @@ class MultiAIEngine:
         return text
 
     def split_into_sentences(self, text):
-        # 🚨 [패치 1 & 2] 입력 모드 통일 & 오토 대본 스캐너 적용
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         clean_lines = []
-        
-        # 자막 타임코드 및 찌꺼기 제거
         for l in lines:
             if re.match(r'^\d+$', l) or '-->' in l: continue
             clean_lines.append(l)
             
-        # 대본(화자) 여부 자동 판독 (상위 15줄 스캔)
         speaker_pattern = re.compile(r'^([a-zA-Z가-힣0-9\s\.\-\[\]]{1,20}):')
         script_cues = sum(1 for l in clean_lines[:15] if speaker_pattern.match(l))
         is_script = script_cues >= 1
@@ -466,7 +482,7 @@ if 'current_text' not in st.session_state: st.session_state.current_text = ""
 if 'current_page' not in st.session_state: st.session_state.current_page = 0
 if 'page_translations' not in st.session_state: st.session_state.page_translations = {}
 
-# [신규 추가] 세션 상태 초기화 (중복 방지용)
+# [신규 추가] 속담 및 사자성어 중복 방지 세션 저장소
 if 'used_proverbs' not in st.session_state: st.session_state.used_proverbs = []
 if 'used_idioms' not in st.session_state: st.session_state.used_idioms = []
 
@@ -492,7 +508,6 @@ with st.sidebar:
         with col_load:
             if st.button("📂 불러오기", use_container_width=True) and selected_doc != "선택하세요":
                 st.session_state.current_text = library[selected_doc]['text']
-                # 🚨 오토 스캐너 적용
                 st.session_state.all_sentences = MultiAIEngine(selected_engine).split_into_sentences(st.session_state.current_text)
                 st.session_state.current_page = 0
                 st.session_state.page_translations = {}
@@ -508,13 +523,11 @@ with st.sidebar:
 
 tutor = MultiAIEngine(selected_engine)
 
-st.title(f"🎓 AI 영어 마스터")
+st.title(f"🎓 AI 영어 및 통합 지식 마스터")
 st.caption(f"🚀 작동 중인 엔진: **{selected_engine}** | 🗄️ DB: **캐시 최적화 연동 완료**")
 
-# [탭 구성 수정] 속담/사자성어, 뉴스 탭을 추가했습니다. 기존 탭은 그대로 유지됩니다.
-tabs = st.tabs(["🔍 스마트 대본 분석", "🧩 150 핵심 패턴", "📜 오늘의 지혜", "📰 어제자 뉴스", "📅 학습 일정 관리"])
+tabs = st.tabs(["🔍 스마트 대본 분석", "🧩 150 핵심 패턴", "📜 오늘의 지혜", "📰 실시간 뉴스", "📅 학습 일정 관리"])
 
-# --- 기존 소스: 탭 0 ---
 with tabs[0]:
     with st.expander("📝 문서 업로드 및 새 텍스트 입력 (클릭해서 열기/접기)", expanded=not bool(st.session_state.current_text)):
         mode = st.radio("입력 방식", ["파일 첨부", "텍스트 직접 입력"], horizontal=True)
@@ -568,7 +581,6 @@ with tabs[0]:
         translations = st.session_state.page_translations["data"]
         clean_chunk = [str(s).replace("\n", " ").strip() for s in current_chunk]
         
-        # 🚨 [패치 8] 직독직해 제거, 1:1 완벽 보장 표 생성
         df = pd.DataFrame({
             "No.": range(start_idx + 1, end_idx + 1),
             "English (원문)": clean_chunk,
@@ -584,7 +596,6 @@ with tabs[0]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "문서 분석 완료", "내용": f"{start_idx+1}~{end_idx}번 문장"})
                 st.toast("출석 도장이 찍혔습니다!", icon="📅")
         
-        # 🚨 [패치 7] 자동 줄간격 폐기, 수동 슬라이더 단독 배치 (기본값 40px로 여유롭게)
         row_h = st.slider("↕️ 리스트 줄 간격 수동 조절", min_value=30, max_value=200, value=40, step=5)
         
         df_config = {
@@ -619,7 +630,6 @@ with tabs[0]:
                 analysis = tutor.deep_analyze(target_s)
                 
                 if analysis:
-                    # 🚨 파이썬 자체 호버 HTML 생성기 (JSON 에러 원천 차단)
                     words_list = analysis.get("words", [])
                     if words_list and isinstance(words_list, list):
                         html_parts = []
@@ -682,7 +692,6 @@ with tabs[0]:
                 else:
                     st.error("🚨 AI 파싱 에러: 다시 한 번 클릭해주세요.")
 
-# --- 기존 소스: 탭 1 ---
 with tabs[1]:
     st.subheader("🚀 150 핵심 패턴 정복")
     all_patterns = get_unique_150_patterns()
@@ -709,19 +718,17 @@ with tabs[1]:
                 st.session_state.study_log.append({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "유형": "패턴 집중 학습", "내용": st.session_state.p_title})
                 st.toast("저장되었습니다!", icon="✅")
 
-# --- [신규 추가] 탭 2: 오늘의 지혜 (속담 & 사자성어) ---
 with tabs[2]:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("🍎 오늘의 속담")
-        st.caption("클릭할 때마다 새로운 동서양 속담이 나옵니다. (100개까지 중복 방지)")
+        st.caption("클릭 시마다 새로운 속담 제공 (중복 방지 100개)")
         if st.button("새 속담 가져오기 🔄"):
             with st.spinner("지혜의 문장을 찾는 중..."):
                 res = tutor.get_daily_proverb(st.session_state.used_proverbs)
                 if res:
                     st.session_state.proverb_data = res
-                    st.session_state.used_proverbs.append(res['proverb'])
-                    # 100개가 넘으면 오래된 것부터 삭제 (무한 루프 방지)
+                    st.session_state.used_proverbs.append(res.get('proverb', ''))
                     if len(st.session_state.used_proverbs) > 100: st.session_state.used_proverbs.pop(0)
 
         if 'proverb_data' in st.session_state:
@@ -733,13 +740,13 @@ with tabs[2]:
 
     with col2:
         st.subheader("📚 오늘의 사자성어")
-        st.caption("정확한 한자 풀이와 고전을 배웁니다. (100개까지 중복 방지)")
+        st.caption("정확한 한자 훈음 풀이와 유래 제공 (중복 방지 100개)")
         if st.button("새 사자성어 가져오기 🔄"):
-            with st.spinner("고서(古書)를 탐독하는 중..."):
+            with st.spinner("고서를 탐독하는 중..."):
                 res = tutor.get_idiom_story(st.session_state.used_idioms)
                 if res:
                     st.session_state.idiom_data = res
-                    st.session_state.used_idioms.append(res['idiom'])
+                    st.session_state.used_idioms.append(res.get('idiom', ''))
                     if len(st.session_state.used_idioms) > 100: st.session_state.used_idioms.pop(0)
 
         if 'idiom_data' in st.session_state:
@@ -752,13 +759,12 @@ with tabs[2]:
                 st.divider()
                 st.write(f"💡 **오늘의 교훈:** {i.get('lesson', '')}")
 
-# --- [신규 추가] 탭 3: 어제자 뉴스 ---
 with tabs[3]:
-    st.subheader("📰 어제자 주요 뉴스 TOP 10")
-    st.caption("AI가 상상하지 않고, 실제 언론 매체에 보도된 내용만 팩트 체크하여 요약합니다.")
+    st.subheader("📰 실시간 팩트 뉴스 TOP 10")
+    st.caption("구글 뉴스에서 실제 보도된 내용을 직접 긁어와 AI가 요약합니다. (상상 금지)")
     
-    if st.button("뉴스 업데이트 🔄"):
-        with st.spinner("어제자 보도 채널을 분석 중입니다..."):
+    if st.button("지금 뉴스 업데이트 🔄"):
+        with st.spinner("실제 뉴스 데이터를 크롤링하여 요약 중입니다..."):
             res = tutor.get_realtime_news()
             if res:
                 st.session_state.news_date = res.get('date', '')
@@ -767,17 +773,16 @@ with tabs[3]:
                 st.error("뉴스를 가져오는 데 실패했습니다.")
 
     if 'news_list' in st.session_state:
-        st.write(f"📅 **기준일:** {st.session_state.news_date}")
+        st.write(f"📅 **상태:** {st.session_state.news_date}")
         for idx, item in enumerate(st.session_state.news_list):
             st.markdown(f"""
             <div class="news-card">
-                <span style="color:gray; font-size:0.8em; font-weight:bold;">[{item.get('channel', '종합 언론')}]</span><br>
+                <span style="color:gray; font-size:0.8em; font-weight:bold;">[{item.get('channel', '종합')}]</span><br>
                 <strong style="font-size:1.1em;">{idx+1}. {item.get('title', '')}</strong>
                 <p style="margin-top:5px; color:#444;">{item.get('summary', '')}</p>
             </div>
             """, unsafe_allow_html=True)
 
-# --- 기존 소스: 탭 2 -> 탭 4로 이동 ---
 with tabs[4]:
     st.subheader("📅 나의 학습 히스토리")
     if st.session_state.study_log: 
